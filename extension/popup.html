@@ -1,0 +1,55 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>SIGED · Juicios IA</title>
+  <style>
+    body{margin:0;padding:14px;width:320px;font:13px/1.4 system-ui,sans-serif;background:#1f2937;color:#f9fafb}
+    h1{margin:0 0 10px;font-size:14px}
+    label{display:flex;flex-direction:column;gap:3px;margin-bottom:8px;font-size:11px;color:#9ca3af}
+    input,select,textarea{background:#374151;color:#f9fafb;border:1px solid #4b5563;border-radius:6px;padding:6px 8px;font:inherit;width:100%;box-sizing:border-box}
+    .row{display:flex;gap:6px}
+    .row > label{flex:1}
+    button.primary{background:#2563eb;color:#fff;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;font-weight:600;width:100%;margin-top:6px}
+    button.primary:disabled{background:#4b5563;cursor:not-allowed}
+    .hint{font-size:11px;color:#9ca3af;margin-top:6px}
+    .ok{color:#34d399}
+    .err{color:#f87171}
+    a{color:#93c5fd}
+  </style>
+</head>
+<body>
+  <h1>SIGED · Juicios IA</h1>
+
+  <label>API key de Claude
+    <input type="password" id="apiKey" placeholder="sk-ant-...">
+  </label>
+
+  <div class="row">
+    <label>Modelo
+      <select id="model">
+        <option value="claude-sonnet-4-5">Sonnet 4.5</option>
+        <option value="claude-opus-4-7">Opus 4.7</option>
+        <option value="claude-haiku-4-5-20251001">Haiku 4.5</option>
+      </select>
+    </label>
+    <label>Máx. chars
+      <input type="number" id="maxChars" min="80" max="2000">
+    </label>
+  </div>
+
+  <label>Tono / instrucciones
+    <textarea id="tone" rows="4"></textarea>
+  </label>
+
+  <button class="primary" id="save">Guardar configuración</button>
+
+  <div class="hint" id="status">
+    Cargá tu API key y abrí la pantalla
+    <em>Cerrar Prom. por Alumno</em> en SIGED. Después tocá
+    <em>Generar juicios</em> en el panel flotante.
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
