@@ -51,21 +51,23 @@ revisás los textos y presionás **Guardar y continuar** en SIGED.
 2. Panel lateral → **Libreta @** → **Cerrar Prom. por Alumno**.
 3. Elegí la libreta (asignatura) en el desplegable
    *Seleccione una libreta…*.
-4. Abrí un alumno: aparece la grilla con todos los períodos.
-5. Abajo a la derecha vas a ver el panel **SIGED · Juicios IA**. Apretá
-   **Generar juicios del período**.
-6. Para cada fila habilitada el script:
-   - Lee las notas del período (Orales, Escritos, Otras actividades) desde
-     el `GXState` de la página.
-   - Calcula el promedio numérico y completa el `<select>` de **Rend.** con
-     la opción más cercana.
-   - Llama a Claude y completa el `<textarea>` de **Juicio Asignatura**
-     (recortado al máximo configurado).
-7. Revisá los textos generados (los podés editar a mano).
-8. Apretá **Guardar y continuar** en SIGED.
+4. Abrí el primer alumno: aparece la grilla con todos los períodos.
+5. Abajo a la derecha vas a ver el panel **SIGED · Juicios IA**. Tenés dos
+   botones:
 
-> La extensión **nunca** guarda sola: siempre hace falta que vos confirmes el
-> guardado en SIGED.
+   - **Generar juicios (alumno actual)**: completa Rend. y Juicio del alumno
+     que tenés abierto y nada más. Vos guardás manualmente.
+   - **Procesar todo el grupo (auto)**: completa al alumno actual, presiona
+     `Guardar y siguiente` (`BTNGUARDARYSIGUIENTE`) y repite hasta el último.
+
+6. Mientras corre el modo automático aparece un botón **⏹ Detener**.
+   Al apretarlo se corta antes del próximo guardado. Los alumnos ya
+   guardados quedan guardados en SIGED (no hay deshacer).
+7. El loop se detiene solo cuando:
+   - El nombre del alumno no cambia tras el guardado (último alumno).
+   - SIGED muestra un popup (lo informa en el log y para).
+   - El alumno actual ya fue procesado en este corrida (anti loop infinito).
+   - El usuario aprieta **Detener**.
 
 ## Privacidad
 

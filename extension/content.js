@@ -273,6 +273,104 @@
     return { ok: true, msg: `${row.dsc}: ${partes.join(' ') || 'sin cambios'}` };
   }
 
+  // Procesa la grilla completa del alumno actual. Devuelve resumen.
+  async function procesarAlumnoActual(log, abortSignal) {
+    const state = readGxState();
+    if (!state) { log('No se encontró GXState. ¿Estás en la pantalla de cierre por alumno?'); return { ok: false }; }
+    const periodMap = collectPeriodDataFromState(state);
+    if (!periodMap.size) { log('No se encontraron datos de períodos en GXState.'); return { ok: false }; }
+    const rows = collectGridRows();
+    if (!rows.length) { log('No se encontró la grilla de períodos.'); return { ok: false }; }
+    const alumno = detectAlumno();
+    const libreta = detectLibreta();
+    log(`Alumno: ${alumno || '?'} · Libreta: ${libreta || '?'} · Filas: ${rows.length}`);
+    for (const row of rows) {
+      if (abortSignal && abortSignal.aborted) return { ok: false, alumno, aborted: true };
+      try {
+        const r = await procesarFila(row, periodMap, { alumno, libreta });
+        log((r.ok ? '✓ ' : '· ') + r.msg);
+      } catch (err) {
+        log(`✗ ${row.dsc || row.code}: ${err.message}`);
+      }
+    }
+    return { ok: true, alumno };
+  }
+
+  // ---------------------------------------------------------------------------
+  // Auto-loop: procesar todos los alumnos del grupo
+  // ---------------------------------------------------------------------------
+  function clickGuardarYSiguiente() {
+    // En SIGED, "Guardar y siguiente" suele ser un <input type=button> o <button>
+    // con id BTNGUARDARYSIGUIENTE (también existe BTNGUARDARYANTERIOR).
+    const btn = document.getElementById('BTNGUARDARYSIGUIENTE');
+    if (!btn) return false;
+    if (btn.disabled) return false;
+    btn.click();
+    return true;
+  }
+
+  function sleep(ms) {
+    return new Promise((resolve) => setTimeout(resolve, ms));
+  }
+
+  // Espera a que cambie el alumno mostrado o se agote el timeout.
+  async function esperarSiguienteAlumno(prevAlumno, timeoutMs = 30000, abortSignal) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < timeoutMs) {
+      if (abortSignal && abortSignal.aborted) return { changed: false, aborted: true };
+      await sleep(500);
+      // Si aparece un popup modal de SIGED puede ser fin de listado o confirmación.
+      const popup = document.getElementById('SECTIONPOPUP');
+      const popupVisible = popup && popup.offsetParent !== null && popup.textContent.trim();
+      if (popupVisible) return { changed: false, popup: popup.textContent.trim().slice(0, 200) };
+      const cur = detectAlumno();
+      if (cur && cur !== prevAlumno) return { changed: true, alumno: cur };
+    }
+    return { changed: false, timeout: true };
+  }
+
+  async function procesarTodos(log, abortSignal) {
+    const procesados = new Set();
+    let i = 0;
+    while (true) {
+      if (abortSignal.aborted) { log('⏹ Detenido por el usuario.'); return; }
+      i += 1;
+      log(`\n— Alumno #${i} —`);
+      const res = await procesarAlumnoActual(log, abortSignal);
+      if (!res.ok) { log('Detengo: no pude procesar este alumno.'); return; }
+      if (res.aborted) { log('⏹ Detenido por el usuario.'); return; }
+
+      if (res.alumno && procesados.has(res.alumno)) {
+        log(`⏹ "${res.alumno}" ya estaba procesado. Asumo fin de grupo.`);
+        return;
+      }
+      if (res.alumno) procesados.add(res.alumno);
+
+      // Pequeña pausa para que el usuario pueda revisar antes del guardado.
+      await sleep(400);
+      if (abortSignal.aborted) { log('⏹ Detenido por el usuario antes de guardar.'); return; }
+
+      const clicked = clickGuardarYSiguiente();
+      if (!clicked) {
+        log('No encontré el botón "Guardar y siguiente" (BTNGUARDARYSIGUIENTE). Detengo.');
+        return;
+      }
+      log('💾 Guardando y avanzando al siguiente alumno…');
+
+      const wait = await esperarSiguienteAlumno(res.alumno, 30000, abortSignal);
+      if (wait.aborted) { log('⏹ Detenido por el usuario.'); return; }
+      if (wait.popup) {
+        log(`SIGED mostró un mensaje: "${wait.popup}". Detengo para que lo revises a mano.`);
+        return;
+      }
+      if (!wait.changed) {
+        log('No detecté cambio de alumno tras 30s. Detengo (¿último alumno o error?).');
+        return;
+      }
+      log(`→ Nuevo alumno: ${wait.alumno}`);
+    }
+  }
+
   // ---------------------------------------------------------------------------
   // Panel flotante
   // ---------------------------------------------------------------------------
@@ -300,11 +398,22 @@
       </header>
       <div class="body">
         <div class="status" data-fld="cfg-status">Cargando configuración…</div>
-        <button class="primary" data-act="run">Generar juicios del período</button>
+        <button class="primary" data-act="run">Generar juicios (alumno actual)</button>
+        <button class="primary alt" data-act="run-all">Procesar todo el grupo (auto)</button>
+        <button class="danger" data-act="stop" hidden>⏹ Detener</button>
         <div class="log" data-fld="log">Listo.</div>
       </div>
     `;
     document.body.appendChild(panel);
+
+    // Estilos extra para los botones nuevos.
+    const extra = document.createElement('style');
+    extra.textContent = `
+      #siged-juicios-panel button.primary.alt{background:#059669}
+      #siged-juicios-panel button.primary.alt:disabled{background:#4b5563}
+      #siged-juicios-panel button.danger{background:#dc2626;color:#fff;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;font-weight:600}
+    `;
+    panel.appendChild(extra);
 
     const log = (msg) => {
       const el = panel.querySelector('[data-fld="log"]');
@@ -320,37 +429,53 @@
       }
     };
 
+    let abortController = null;
+    const setRunning = (running) => {
+      panel.querySelector('[data-act="run"]').disabled = running;
+      panel.querySelector('[data-act="run-all"]').disabled = running;
+      panel.querySelector('[data-act="stop"]').hidden = !running;
+    };
+
     panel.addEventListener('click', async (e) => {
       const act = e.target.getAttribute('data-act');
       if (!act) return;
       if (act === 'toggle') { panel.classList.toggle('collapsed'); return; }
-      if (act === 'run') {
+      if (act === 'stop') {
+        if (abortController) abortController.abort();
+        return;
+      }
+      if (act === 'run' || act === 'run-all') {
         await loadConfig();
         refreshStatus();
         if (!CFG.apiKey) { log('Falta API key. Configurala desde el ícono de la extensión.'); return; }
-        const btn = e.target;
-        btn.disabled = true;
+
+        if (act === 'run-all') {
+          const ok = window.confirm(
+            'Esto va a procesar TODOS los alumnos del grupo:\n' +
+            '- generar Rend. y Juicio para cada uno con IA\n' +
+            '- guardar automáticamente con "Guardar y siguiente"\n\n' +
+            'Vas a poder detenerlo con el botón "Detener" en cualquier momento, ' +
+            'pero los alumnos ya guardados quedan guardados en SIGED.\n\n' +
+            '¿Continuar?'
+          );
+          if (!ok) return;
+        }
+
+        abortController = new AbortController();
+        setRunning(true);
         try {
-          const state = readGxState();
-          if (!state) { log('No se encontró GXState. ¿Estás en la pantalla de cierre por alumno?'); return; }
-          const periodMap = collectPeriodDataFromState(state);
-          if (!periodMap.size) { log('No se encontraron datos de períodos en GXState.'); return; }
-          const rows = collectGridRows();
-          if (!rows.length) { log('No se encontró la grilla de períodos.'); return; }
-          const alumno = detectAlumno();
-          const libreta = detectLibreta();
-          log(`Alumno: ${alumno || '?'} · Libreta: ${libreta || '?'} · Filas: ${rows.length}`);
-          for (const row of rows) {
-            try {
-              const r = await procesarFila(row, periodMap, { alumno, libreta });
-              log((r.ok ? '✓ ' : '· ') + r.msg);
-            } catch (err) {
-              log(`✗ ${row.dsc || row.code}: ${err.message}`);
-            }
+          if (act === 'run') {
+            await procesarAlumnoActual(log, abortController.signal);
+            log('Listo. Revisá la grilla y, si está OK, presioná "Guardar y siguiente" en SIGED.');
+          } else {
+            await procesarTodos(log, abortController.signal);
+            log('— Fin del recorrido del grupo —');
           }
-          log('Listo. Revisá la grilla y, si está OK, presioná "Guardar y continuar" en SIGED.');
+        } catch (err) {
+          log(`✗ ${err.message || err}`);
         } finally {
-          btn.disabled = false;
+          setRunning(false);
+          abortController = null;
         }
       }
     });
