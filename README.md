@@ -76,6 +76,31 @@ del grupo.
 - Los `host_permissions` están limitados a `*.siged.com.uy` y
   `api.anthropic.com`.
 
+## Rúbrica aplicada al juicio
+
+Se le pasa a Claude la siguiente rúbrica como instrucción obligatoria, además
+de un resumen calculado localmente con los conteos del período:
+
+- Nota igual a `1` → ausencia o no entrega del trabajo (se menciona como
+  entrega pendiente).
+- Notas entre `2` y `4` (cualquier nota menor a 5) → "debe mejorar la calidad
+  de sus producciones".
+- Notas de `5` o más → trabajo a destacar. Cuanto más alta la nota, más
+  fuerte la valoración (5-6 satisfactorio, 7-8 muy bueno, 9-10 destacado).
+- Si conviven notas en distintos rangos, el juicio equilibra lo positivo con
+  lo a mejorar.
+
+## El panel no aparece
+
+- Verificá que la extensión esté habilitada en `chrome://extensions` y que
+  el host coincida con el de tu institución (`*.siged.com.uy`).
+- Abrí DevTools (F12) en la pestaña de SIGED → tab **Console**: tiene que
+  aparecer una línea `[SIGED Juicios] content.js cargado en …`.
+  - Si no aparece, recargá la extensión (⟳) y la pestaña.
+- El panel se inyecta solo en el frame principal con `position:fixed` y
+  `z-index:2147483647` — si igual no se ve probablemente hay un overlay de
+  SIGED tapándolo; arrastralo desde la barra superior.
+
 ## Estructura del repo
 
 ```
