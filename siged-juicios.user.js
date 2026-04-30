@@ -26,8 +26,8 @@
   };
 
   const DEFAULT_MODEL = 'claude-sonnet-4-5';
-  const DEFAULT_MAX_CHARS = 500;
-  const DEFAULT_TONE = 'Profesional, claro, en español rioplatense, dirigido a la familia del estudiante.';
+  const DEFAULT_MAX_CHARS = 280;
+  const DEFAULT_TONE = 'Profesional, claro, conciso, en español rioplatense. Siempre en TERCERA PERSONA refiriéndose al/la estudiante (nunca "vos", "tú" ni "usted"). Evitar adjetivos exagerados y opiniones sobre la familia.';
 
   const cfg = {
     get apiKey() { return GM_getValue(CFG_KEYS.apiKey, ''); },
@@ -194,9 +194,11 @@
     return new Promise((resolve, reject) => {
       const system = [
         'Sos un asistente que ayuda a docentes uruguayos a redactar juicios de evaluación para boletines escolares (SIGED).',
-        'Escribís en español rioplatense, en tercera persona, sin emojis, evitando juicios sobre la familia y respetando la privacidad.',
+        'REGLA OBLIGATORIA: el juicio se redacta SIEMPRE en tercera persona, refiriéndose al/la estudiante (por ejemplo: "demuestra", "presenta dificultades", "logra"). Nunca uses segunda persona ("vos", "tú", "usted") ni primera persona.',
+        'No uses emojis ni signos de exclamación múltiples. No emitas juicios sobre la familia. Respetá la privacidad.',
         'No inventes datos: usá únicamente la información provista. No menciones nombres de tareas concretas si no se pasan.',
-        `Largo máximo: ${maxChars} caracteres. Devolvé solamente el texto del juicio, sin comillas ni encabezados.`,
+        'Sé breve y concreto: una o dos oraciones bastan.',
+        `Largo máximo: ${maxChars} caracteres. Devolvé SOLO el texto del juicio, sin comillas ni encabezados.`,
         `Tono solicitado: ${tono}`,
       ].join('\n');
 
@@ -462,11 +464,32 @@
   // ---------------------------------------------------------------------------
   // Bootstrap
   // ---------------------------------------------------------------------------
+  function maybeShowSetupWizard() {
+    if (cfg.apiKey) return; // ya configurado
+    const panel = document.getElementById('siged-juicios-panel');
+    if (!panel) return;
+    panel.classList.remove('collapsed');
+    const log = panel.querySelector('[data-fld="log"]');
+    if (log) {
+      log.textContent =
+        'Configuración inicial:\n' +
+        '1) Pegá tu API key de Claude (sk-ant-...).\n' +
+        '2) Elegí modelo y máx. de caracteres (default 280, podés bajarlo).\n' +
+        '3) Ajustá el tono (ya viene en 3ra persona).\n' +
+        '4) Apretá "Guardar config".\n' +
+        '5) Abrí "Cerrar Prom. por Alumno" y dale a "Generar juicios".\n';
+    }
+  }
+
   function bootstrap() {
     buildPanel();
+    maybeShowSetupWizard();
     // Re-construir si SIGED reemplaza el contenido (es una SPA GeneXus).
     const obs = new MutationObserver(() => {
-      if (!document.getElementById('siged-juicios-panel')) buildPanel();
+      if (!document.getElementById('siged-juicios-panel')) {
+        buildPanel();
+        maybeShowSetupWizard();
+      }
     });
     obs.observe(document.body, { childList: true, subtree: true });
   }
