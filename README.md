@@ -1,94 +1,111 @@
 # SIGED · Armado de juicios con IA
 
-Userscript de Tampermonkey/Violentmonkey que automatiza el cierre de promedios y la
+Extensión de Chrome (Manifest V3) que automatiza el cierre de promedios y la
 redacción de juicios en SIGED (`*.siged.com.uy`) usando la API de Claude.
 
-Sobre la pantalla **Libreta @ → Cerrar Prom. por Alumno**, agrega un panel flotante
-que lee las notas del período habilitado, calcula el rendimiento numérico y genera
-el juicio de la asignatura llamando a Claude. Después podés revisar y presionar
-"Guardar y continuar" en SIGED como siempre.
+Sobre la pantalla **Libreta @ → Cerrar Prom. por Alumno**, agrega un panel
+flotante que lee las notas del período habilitado, calcula el rendimiento
+numérico y genera el juicio de la asignatura llamando a Claude. Después
+revisás los textos y presionás **Guardar y continuar** en SIGED.
 
-## Cómo funciona
+> Existe también una versión userscript (`siged-juicios.user.js`) para
+> Tampermonkey/Violentmonkey, equivalente. Usá la extensión si querés algo
+> instalable directo en Chrome/Edge/Brave.
 
-1. Ya autenticado en SIGED, vas a:
-   - `homebackend.aspx`
-   - panel lateral → **Libreta @** → **Cerrar Prom. por Alumno**
-   - **Seleccione una libreta…** y elegís el grupo / asignatura.
-2. Para cada alumno se abre la grilla de períodos (`GridjuiciosContainerTbl`).
-3. Apretás **Generar juicios del período** en el panel del userscript.
-   - El script lee el `GXState` de la página y arma, por cada fila/período, el
-     detalle de notas (Orales, Escritos, Otras actividades, inasistencias y, si
-     existe, el juicio previo).
-   - Si la asignatura pide **Rendimiento**, completa el `select`
-     `vCALIFXREUCALIFCOD_NNNN` con la opción más cercana al promedio numérico.
-   - Si la asignatura pide **Juicio**, llama a Claude y completa el textarea
-     `vCALIFXREUJUICIO_NNNN` (recortado al máximo de caracteres configurado).
-4. Revisás los textos y presionás **Guardar y continuar** en SIGED.
+## Instalación de la extensión (Chrome/Edge/Brave)
 
-> El userscript **nunca** guarda solo: siempre requiere que vos confirmes el
-> guardado en SIGED. Es una herramienta de redacción asistida.
+1. Cloná o descargá este repo.
+2. Abrí `chrome://extensions` (o `edge://extensions`, `brave://extensions`).
+3. Activá **Modo de desarrollador** (arriba a la derecha).
+4. Click en **Cargar descomprimida** y seleccioná la carpeta `extension/`
+   de este repo.
+5. La extensión queda activa para `https://*.siged.com.uy/*`.
 
-## Requisitos
+> Para Firefox hace falta empaquetar y firmar como add-on, no está soportado
+> directamente. En Firefox usá el userscript.
 
-- Navegador con [Tampermonkey](https://www.tampermonkey.net/) o
-  [Violentmonkey](https://violentmonkey.github.io/).
-- Una API key de Anthropic (`sk-ant-…`) con saldo / créditos disponibles.
+## Configuración inicial
 
-## Instalación
+1. Click en el ícono de la extensión (arriba a la derecha del navegador).
+2. Pegá tu **API key de Claude** (`sk-ant-...`). Se guarda con
+   `chrome.storage.local`, queda solo en tu navegador.
+3. Elegí **modelo**:
+   - `claude-sonnet-4-5` (recomendado).
+   - `claude-opus-4-7` (mejor calidad, más caro).
+   - `claude-haiku-4-5-20251001` (más rápido y barato).
+4. **Máx. chars**: largo máximo del juicio. Default `280` (≈1-2 oraciones).
+5. **Tono / instrucciones**: el default fija explícitamente
+   **3ra persona**. Podés agregar matices ("nivel inicial", "secundaria",
+   etc.) sin sacar la regla de tercera persona.
+6. **Guardar configuración**.
 
-1. Instalá Tampermonkey o Violentmonkey en tu navegador.
-2. Abrí el archivo [`siged-juicios.user.js`](./siged-juicios.user.js) y elegí
-   "Instalar userscript" cuando la extensión te lo proponga (o creá un script
-   nuevo y pegá el contenido).
-3. Entrá a SIGED. Vas a ver el panel **SIGED · Juicios IA** abajo a la derecha.
+### Cómo conseguir la API key
 
-## Configuración del panel
+1. Andá a https://console.anthropic.com
+2. **Settings → API Keys → Create Key**.
+3. Copiala (empieza con `sk-ant-...`). Necesitás créditos / billing activos.
 
-| Campo | Descripción |
-|-------|-------------|
-| API key de Claude | Se guarda con `GM_setValue` (queda solo en tu navegador). |
-| Modelo | `claude-sonnet-4-5` (recomendado), `claude-opus-4-7` o `claude-haiku-4-5-20251001`. |
-| Máx. chars | Límite duro de caracteres para el juicio (default 500). |
-| Tono / instrucciones | Texto extra que se inyecta en el `system` prompt. |
+## Uso en SIGED
 
-Botones:
+1. Entrá a `https://candersen.siged.com.uy/sigedx/homebackend.aspx` ya logueado.
+2. Panel lateral → **Libreta @** → **Cerrar Prom. por Alumno**.
+3. Elegí la libreta (asignatura) en el desplegable
+   *Seleccione una libreta…*.
+4. Abrí el primer alumno: aparece la grilla con todos los períodos.
+5. Abajo a la derecha vas a ver el panel **SIGED · Juicios IA**. Tenés dos
+   botones:
 
-- **Guardar config** persiste los cambios.
-- **Generar juicios del período** procesa todas las filas habilitadas de la
-  grilla actual.
+   - **Generar juicios (alumno actual)**: completa Rend. y Juicio del alumno
+     que tenés abierto y nada más. Vos guardás manualmente.
+   - **Procesar todo el grupo (auto)**: completa al alumno actual, presiona
+     `Guardar y siguiente` (`BTNGUARDARYSIGUIENTE`) y repite hasta el último.
+
+6. Mientras corre el modo automático aparece un botón **⏹ Detener**.
+   Al apretarlo se corta antes del próximo guardado. Los alumnos ya
+   guardados quedan guardados en SIGED (no hay deshacer).
+7. El loop se detiene solo cuando:
+   - El nombre del alumno no cambia tras el guardado (último alumno).
+   - SIGED muestra un popup (lo informa en el log y para).
+   - El alumno actual ya fue procesado en este corrida (anti loop infinito).
+   - El usuario aprieta **Detener**.
 
 ## Privacidad
 
-- La API key y la configuración se guardan localmente con `GM_setValue` (no se
-  envían a ningún servidor además de `api.anthropic.com`).
-- En cada llamada a Claude se envía: nombre del alumno, libreta/asignatura,
-  período evaluado, detalle de notas y promedio. No se envía información de
-  otros alumnos ni datos sensibles fuera de los que aparecen en pantalla.
-- El `@connect api.anthropic.com` del userscript hace que Tampermonkey pida
-  permiso explícito la primera vez que llama a la API.
+- La API key se guarda con `chrome.storage.local` (solo tu perfil de
+  navegador).
+- La llamada a `api.anthropic.com` la hace el service worker
+  (`background.js`) y se envían: nombre del alumno, libreta/asignatura,
+  período evaluado y detalle de notas. No se mandan datos de otros alumnos.
+- Los `host_permissions` están limitados a `*.siged.com.uy` y
+  `api.anthropic.com`.
+
+## Estructura del repo
+
+```
+extension/
+  manifest.json     – MV3, permisos y matches
+  background.js     – service worker, llamada a la API de Claude
+  content.js        – panel flotante + lógica de extracción + relleno
+  popup.html        – UI de configuración (ícono de la extensión)
+  popup.js          – guarda/lee chrome.storage.local
+siged-juicios.user.js  – versión userscript (Tampermonkey/Violentmonkey)
+Guardar promedio       – HTML de referencia de la pantalla de cierre
+```
 
 ## Limitaciones conocidas
 
-- Los códigos de calificación (`vCALIFXREUCALIFCOD_*`) varían entre instituciones.
-  El script elige la opción del `<select>` cuyo texto numérico está más cerca
-  del promedio. Si tu libreta usa códigos en letras (MB, B, R, …) sin valor
-  numérico, vas a tener que ajustar el rendimiento a mano.
-- Si el período no está habilitado (`Mensaje` = "Período no habilitado") la fila
-  se omite.
-- Si SIGED cambia los `id`/`name` de los campos en una nueva versión hay que
-  actualizar el script.
+- Si los códigos de calificación de la libreta son letras sin valor numérico
+  (MB, B, R…), el Rend. hay que completarlo a mano.
+- Si SIGED renombra los `id` (`vCALIFXREUCALIFCOD_NNNN`,
+  `vCALIFXREUJUICIO_NNNN`, `GridjuiciosContainerTbl`, etc.) hay que
+  actualizar los selectores en `extension/content.js`.
+- Si el período no está habilitado (`Mensaje` = "Período no habilitado") la
+  fila se omite.
 
 ## Desarrollo
 
-El proyecto contiene:
-
-- `siged-juicios.user.js` — userscript principal.
-- `Guardar promedio` — captura HTML de referencia de la pantalla "Cierre de
-  promedios por alumno". Se usó para mapear los `id` de los campos.
-
-Para iterar:
-
-1. Editá `siged-juicios.user.js`.
-2. En el panel de Tampermonkey, recargá el script (o reinstalalo desde el
-   archivo).
-3. Recargá la pestaña de SIGED.
+1. Editá los archivos en `extension/`.
+2. En `chrome://extensions` apretá el botón ⟳ del recargar de la extensión.
+3. Recargá la pestaña de SIGED (los content scripts se reinyectan).
+4. Para ver logs del service worker: en `chrome://extensions` → click en
+   **service worker** debajo del nombre de la extensión.
