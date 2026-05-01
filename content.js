@@ -864,10 +864,11 @@
         log('No detecté postback tras 45s. Detengo (¿último alumno o error?).');
         return;
       }
-      // Settle wait: damos un respiro extra para que SIGED termine de pintar
-      // todos los onchange iniciales (recálculo de promedios, habilitación
-      // de campos, etc.) antes de procesar al nuevo alumno.
-      await sleep(1500);
+      // Settle wait: damos 5 segundos extra después de que SIGED carga el
+      // siguiente alumno para que termine los onchange iniciales
+      // (recálculo de promedios, habilitación de campos, etc.).
+      log('   ⏳ esperando 5s a que SIGED termine de pintar al próximo alumno…');
+      await sleep(5000);
       const nuevo = detectAlumno();
       log(`→ Nuevo alumno: ${nuevo || '(sin nombre detectado)'}`);
     }
