@@ -445,6 +445,8 @@
     const t0 = Date.now();
     while (Date.now() - t0 < timeoutMs) {
       if (abortSignal && abortSignal.aborted) return { aborted: true };
+      // También cerramos popups que pudieran estar abiertos del estado anterior.
+      autoConfirmPopup();
       if (!gxBusy(el)) return { idle: true };
       await sleep(300);
     }
@@ -458,11 +460,25 @@
     const t0 = Date.now();
     let sawBusy = false;
     let lastLog = 0;
+    let confirmados = 0;
     while (Date.now() - t0 < timeoutMs) {
       if (abortSignal && abortSignal.aborted) return { aborted: true };
+      // Si GX abrió un popup de confirmación lo aceptamos automáticamente.
+      const auto = autoConfirmPopup();
+      if (auto) {
+        if (auto.confirmed) {
+          confirmados += 1;
+          if (log) log(`   ↩ confirmé popup ("${auto.text.slice(0, 80)}…") con ${auto.button || 'botón afirmativo'}`);
+          // Esperamos un poco a que GX procese la confirmación.
+          await sleep(500);
+          continue;
+        }
+        if (log) log(`   ⚠ Popup activo sin botón afirmativo: "${auto.text.slice(0, 120)}"`);
+        return { popup: auto.text };
+      }
       const busy = gxBusy(el);
       if (busy) sawBusy = true;
-      if (sawBusy && !busy) return { complete: true };
+      if (sawBusy && !busy) return { complete: true, confirmados };
       if (Date.now() - lastLog > 5000 && log) {
         const elapsed = Math.round((Date.now() - t0) / 1000);
         log(`   …esperando a GeneXus (${elapsed}s, busy=${busy})`);
@@ -470,7 +486,7 @@
       }
       await sleep(300);
     }
-    return { timeout: true, sawBusy };
+    return { timeout: true, sawBusy, confirmados };
   }
 
   function sleep(ms) {
@@ -504,10 +520,54 @@
       const el = document.getElementById(id);
       if (el && el.offsetParent !== null) {
         const txt = (el.textContent || '').trim();
-        if (txt) return { id, text: txt.slice(0, 200) };
+        if (txt) return { id, text: txt.slice(0, 200), el };
       }
     }
     return null;
+  }
+
+  // Busca un botón "Continuar / Aceptar / Sí" dentro de un popup activo de SIGED.
+  function findPopupConfirmButton() {
+    // 1) IDs típicos del framework.
+    const ids = [
+      'BTNCONTINUARPOPUP',
+      'BTNACEPTARPOPUP',
+      'BTNACEPTAR',
+      'BTNSI',
+      'BTNENTENDIDO_MPAGE',
+      'BTNCERRARMASTARDE_MPAGE',
+      'BTNCERRARPOPUPDIAG',
+    ];
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (el && !el.disabled && el.offsetParent !== null) return el;
+    }
+    // 2) Cualquier botón visible dentro de un popup activo cuyo texto sea afirmativo.
+    const containers = ['SECTIONPOPUP', 'SECTIONPOPUPDIAG', 'DIAG'];
+    for (const cid of containers) {
+      const c = document.getElementById(cid);
+      if (!c || c.offsetParent === null) continue;
+      const btns = c.querySelectorAll('button, input[type=button], input[type=submit], a, span');
+      for (const btn of btns) {
+        if (btn.disabled) continue;
+        if (btn.offsetParent === null) continue;
+        const t = (btn.value || btn.textContent || '').trim();
+        if (!t || t.length > 40) continue;
+        if (/^(s[ií]|aceptar|continuar|ok|guardar|confirmar|entendido)$/i.test(t)) return btn;
+      }
+    }
+    return null;
+  }
+
+  // Si hay un popup de SIGED esperando confirmación, lo cerramos clickeando
+  // el botón afirmativo. Devuelve el texto del popup confirmado o null.
+  function autoConfirmPopup() {
+    const pop = popupVisible();
+    if (!pop) return null;
+    const btn = findPopupConfirmButton();
+    if (!btn) return { confirmed: false, text: pop.text };
+    clickLikeUser(btn);
+    return { confirmed: true, text: pop.text, button: btn.id || (btn.value || btn.textContent || '').trim() };
   }
 
   // Espera a que el GXState (input hidden de GeneXus) cambie, indicando que
@@ -577,6 +637,7 @@
       // Esperamos a que GX procese el evento (flag busy on -> off).
       const ev = await waitForGxEventComplete(btnSave, 90000, abortSignal, log);
       if (ev.aborted) { log('⏹ Detenido por el usuario.'); return; }
+      if (ev.popup) { log(`SIGED mostró un popup que no pude confirmar: "${ev.popup.slice(0, 200)}". Detengo para que lo revises a mano.`); return; }
       if (ev.timeout) {
         if (!ev.sawBusy) {
           log('El click no levantó el flag GX-busy: vuelvo a clickear con foco+Enter…');
@@ -586,11 +647,14 @@
           btnSave.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
           const ev2 = await waitForGxEventComplete(btnSave, 60000, abortSignal, log);
           if (ev2.aborted) { log('⏹ Detenido por el usuario.'); return; }
+          if (ev2.popup) { log(`Popup sin botón afirmativo: "${ev2.popup.slice(0, 200)}". Detengo.`); return; }
           if (!ev2.complete) { log('Sigue sin completarse. Detengo.'); return; }
         } else {
           log('GeneXus no terminó el guardado tras 90s. Detengo.');
           return;
         }
+      } else if (ev.confirmados) {
+        log(`   (cerré ${ev.confirmados} popup(s) de SIGED)`);
       }
 
       // GX terminó el evento; ahora esperamos a que la grilla se repueble
