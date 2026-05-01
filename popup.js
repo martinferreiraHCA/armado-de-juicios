@@ -4,6 +4,9 @@ const DEFAULTS = {
   maxChars: 280,
   tone: 'Profesional, claro, conciso, en español rioplatense. Siempre en TERCERA PERSONA refiriéndose al/la estudiante (nunca "vos", "tú" ni "usted"). Evitar adjetivos exagerados y opiniones sobre la familia.',
   compararConAnterior: true,
+  rendUsarRango: false,
+  rendMin: 4,
+  rendMax: 7,
   rubrica1: 'No entregó el trabajo o no presentó evidencia (ausencia de producción). Mencionar como entrega pendiente cuando corresponda.',
   rubrica24: 'Producciones insuficientes (notas menores a 5). Reconocer las dificultades pero adoptar tono CONSTRUCTIVO y POSITIVO: subrayar el margen de mejora y los aspectos puntuales a fortalecer; evitar etiquetas desmoralizantes.',
   rubrica56: 'Trabajo satisfactorio: cumple con lo solicitado.',
@@ -14,6 +17,7 @@ const DEFAULTS = {
 const FIELDS = [
   'apiKey', 'model', 'maxChars', 'tone',
   'compararConAnterior',
+  'rendUsarRango', 'rendMin', 'rendMax',
   'rubrica1', 'rubrica24', 'rubrica56', 'rubrica78', 'rubrica910',
 ];
 
@@ -30,7 +34,10 @@ function getFieldValue(id) {
   const el = $(id);
   if (!el) return undefined;
   if (el.type === 'checkbox') return el.checked;
-  if (el.type === 'number') return parseInt(el.value, 10) || 0;
+  if (el.type === 'number') {
+    const n = parseFloat((el.value || '').replace(',', '.'));
+    return Number.isNaN(n) ? 0 : n;
+  }
   return el.value.trim();
 }
 
@@ -52,6 +59,13 @@ async function save() {
   for (const k of FIELDS) cfg[k] = getFieldValue(k);
   cfg.maxChars = Math.max(80, Math.min(2000, cfg.maxChars || DEFAULTS.maxChars));
   if (!cfg.tone) cfg.tone = DEFAULTS.tone;
+  // Rango Rend: si los valores son inválidos, lo deshabilitamos.
+  cfg.rendMin = Math.max(1, Math.min(10, cfg.rendMin || DEFAULTS.rendMin));
+  cfg.rendMax = Math.max(1, Math.min(10, cfg.rendMax || DEFAULTS.rendMax));
+  if (cfg.rendMin >= cfg.rendMax) {
+    cfg.rendUsarRango = false;
+    showStatus('⚠ Rango Rend inválido (min ≥ max). Lo deshabilité.', 'err');
+  }
   // Si una rúbrica queda vacía, mantenemos el default para no romper el prompt.
   for (const k of ['rubrica1', 'rubrica24', 'rubrica56', 'rubrica78', 'rubrica910']) {
     if (!cfg[k]) cfg[k] = DEFAULTS[k];
