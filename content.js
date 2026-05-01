@@ -1078,8 +1078,14 @@
           return;
         }
         if (diag.periods === 0) {
-          log('La tabla tiene filas pero el GXState no trae datos de períodos. Posible: ningún período está habilitado para este alumno o SIGED renderizó la pantalla con otro SDT. Detengo para evitar perder datos.');
-          return;
+          // GXState vacío (típico tras recargar o tras varios saves).
+          // Antes de fallar probamos el scrapeo DOM de la grilla FreeStyleGrid.
+          const domMap = extractPeriodsFromDom();
+          if (domMap.size === 0) {
+            log('La tabla tiene filas pero ni GXState ni el DOM (FreeStyleGrid) traen datos de períodos. Detengo.');
+            return;
+          }
+          log(`   ℹ GXState vacío; uso fallback DOM (${domMap.size} períodos detectados). Sigo adelante.`);
         }
       }
       firstIteration = false;
