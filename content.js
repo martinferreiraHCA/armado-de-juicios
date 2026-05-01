@@ -396,13 +396,21 @@
   async function procesarAlumnoActual(log, abortSignal) {
     const state = readGxState();
     if (!state) { log('No se encontró GXState. ¿Estás en la pantalla de cierre por alumno?'); return { ok: false }; }
-    const periodMap = collectPeriodDataFromState(state);
-    if (!periodMap.size) { log('No se encontraron datos de períodos en GXState.'); return { ok: false }; }
+    let periodMap = collectPeriodDataFromState(state);
+    let usandoFallback = false;
+    if (!periodMap.size) {
+      // SIGED no trae datos de período en GXState para este alumno (a veces
+      // pasa entre alumnos por lazy-load). Intentamos scrapeando el DOM.
+      log('   GXState sin datos de período — intento extraer del DOM…');
+      periodMap = extractPeriodsFromDom();
+      usandoFallback = true;
+    }
+    if (!periodMap.size) { log('No se encontraron datos de períodos ni en GXState ni en el DOM.'); return { ok: false }; }
     const rows = collectGridRows();
     if (!rows.length) { log('No se encontró la grilla de períodos.'); return { ok: false }; }
     const alumno = detectAlumno(state);
     const libreta = detectLibreta(state);
-    log(`Alumno: ${alumno || '?'} · Libreta: ${libreta || '?'} · Filas: ${rows.length}`);
+    log(`Alumno: ${alumno || '?'} · Libreta: ${libreta || '?'} · Filas: ${rows.length}${usandoFallback ? ' · fuente: DOM (fallback)' : ''}`);
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       if (abortSignal && abortSignal.aborted) return { ok: false, alumno, aborted: true };
@@ -562,18 +570,47 @@
   function inspectPage() {
     const stateRaw = readGxStateRaw();
     const hasGxState = !!stateRaw;
+    const stateSize = stateRaw ? stateRaw.length : 0;
     let state = null;
     if (stateRaw) { try { state = JSON.parse(stateRaw); } catch (_) {} }
     const tbl = document.getElementById('GridjuiciosContainerTbl');
     const rows = tbl ? tbl.querySelectorAll('tbody > tr[id^="GridjuiciosContainerRow_"]').length : 0;
-    const periods = state ? collectPeriodDataFromState(state).size : 0;
-    return { hasGxState, hasTable: !!tbl, rows, periods, state };
+    const periodMap = state ? collectPeriodDataFromState(state) : new Map();
+    const periods = periodMap.size;
+    // Conteos auxiliares: cuántos objetos tienen ReuCod (aunque no matcheen
+    // los criterios completos), cuántos colDatosReu, etc.
+    let reuCodCount = 0, colDatosReuCount = 0;
+    const reuCodSamples = [];
+    if (state) {
+      walkObjects(state, (obj) => {
+        if (typeof obj.ReuCod === 'string') {
+          reuCodCount += 1;
+          if (reuCodSamples.length < 5) {
+            const keys = Object.keys(obj).slice(0, 12);
+            reuCodSamples.push(`${obj.ReuCod.trim()} → keys: [${keys.join(', ')}]`);
+          }
+        }
+        if (Array.isArray(obj.colDatosReu)) colDatosReuCount += 1;
+      });
+    }
+    const topKeys = state ? Object.keys(state).slice(0, 20) : [];
+    return {
+      hasGxState, stateSize, hasTable: !!tbl, rows, periods,
+      reuCodCount, colDatosReuCount, reuCodSamples, topKeys, state,
+    };
   }
 
-  // Devuelve true cuando hay grilla con filas y períodos en GXState (alumno listo).
+  // Devuelve true cuando hay grilla con filas y períodos disponibles.
+  // Acepta períodos vía GXState o vía scraping DOM como fallback.
   function gridReady() {
     const i = inspectPage();
-    return i.hasGxState && i.hasTable && i.rows > 0 && i.periods > 0;
+    if (!i.hasGxState || !i.hasTable || i.rows <= 0) return false;
+    if (i.periods > 0) return true;
+    // Fallback DOM: si SIGED no rellenó el SDT pero hay filas, probamos a
+    // extraer del HTML rendido. Si conseguimos al menos un período habilitado
+    // (o cualquier período con código), consideramos la página lista.
+    const domMap = extractPeriodsFromDom();
+    return domMap.size > 0;
   }
 
   async function waitForGridReady(timeoutMs, abortSignal) {
@@ -644,10 +681,20 @@
     return null;
   }
 
-  // Vuelco diagnóstico: imprime el estado de todos los contenedores y botones
-  // candidatos en este momento. Lo usamos cuando GX queda en busy=true mucho
-  // tiempo para entender qué le falta.
+  // Vuelco diagnóstico completo. Imprime contenedores, botones, y un
+  // resumen del GXState (top-level keys, conteos de ReuCod y colDatosReu,
+  // ejemplos de objetos con ReuCod). Lo usamos cuando algo se traba.
   function dumpDiagnostic(log) {
+    const insp = inspectPage();
+    log(`     GXState: present=${insp.hasGxState} size=${insp.stateSize} chars`);
+    log(`     Top keys: [${insp.topKeys.join(', ')}]`);
+    log(`     ReuCod en state: ${insp.reuCodCount} objetos · colDatosReu arrays: ${insp.colDatosReuCount} · períodos detectados: ${insp.periods}`);
+    if (insp.reuCodSamples.length) {
+      log('     Muestras de objetos con ReuCod:');
+      for (const s of insp.reuCodSamples) log(`       - ${s}`);
+    }
+    log(`     Grilla: tabla=${insp.hasTable}, filas=${insp.rows}`);
+
     const containers = [
       'SECTIONPOPUP', 'SECTIONPOPUPDIAG', 'TBMSJPOPUP', 'TBMSJPOPUPDIAG',
       'TBMENSAJE_MPAGE', 'TABLEDIAGNOSTICO', 'TBLANTECEDENTES', 'DIAG',
@@ -661,21 +708,67 @@
       const r = el.getBoundingClientRect();
       log(`     #${id}: visible=${isVisible(el)} display=${cs.display} chars=${len} box=${Math.round(r.width)}x${Math.round(r.height)}`);
     }
-    // Botones potencialmente clickeables, fuera de la lista negra de toolbar.
     const btns = Array.from(document.querySelectorAll('button, input[type=button], input[type=submit]'));
     const candidates = btns
       .filter((b) => isVisible(b) && !TOOLBAR_BTN_BLACKLIST.has(b.id) && !b.disabled)
       .map((b) => `${b.id || '?'}="${(b.value || b.textContent || '').trim().slice(0, 40)}"`);
     log(`     visibles: ${candidates.slice(0, 25).join(', ') || '(ninguno)'}`);
+    log('     [F12 Console] hay un dump completo con outerHTML y GXState raw.');
     try {
-      console.log('[SIGED Juicios] dumpDiagnostic — popups y botones', {
+      console.log('[SIGED Juicios] dumpDiagnostic — completo', {
+        inspect: insp,
+        rawState: readGxStateRaw(),
         popups: containers.map((id) => {
           const el = document.getElementById(id);
           return el ? { id, visible: isVisible(el), display: getComputedStyle(el).display, len: (el.textContent || '').trim().length, html: el.outerHTML.slice(0, 800) } : { id, present: false };
         }),
         buttons: candidates,
+        gridRows: collectGridRows().map((r) => ({ idx: r.idx, code: r.code, dsc: r.dsc, hasJuicio: !!r.juicio, hasCalif: !!r.califSelect })),
       });
     } catch (_) {}
+  }
+
+  // Fallback: si el GXState NO trae períodos para el alumno actual, intentamos
+  // extraer los datos del DOM (HTML rendido de cada fila). Cada fila de la
+  // grilla tiene celdas con OActividadesHTML/OralesHTML/EscritosHTML inline,
+  // y el span_vMSGREND_NNNN suele tener el texto "Período habilitado…".
+  function extractPeriodsFromDom() {
+    const map = new Map();
+    const rows = $$('#GridjuiciosContainerTbl > tbody > tr[id^="GridjuiciosContainerRow_"]');
+    for (const tr of rows) {
+      const idx = (tr.id.match(/_(\d+)$/) || [])[1];
+      const reuCodEl = document.getElementById(`span_vREUCOD_${idx}`);
+      const reuCod = (reuCodEl && reuCodEl.textContent.trim()) || '';
+      if (!reuCod) continue;
+      // Texto del mensaje del período (habilitado / no habilitado).
+      // El SPAN no siempre existe; fallback a leer la cell por data-colindex.
+      const mensajeEl = document.querySelector(`#${tr.id} [id*="MSGREND_${idx}"], #${tr.id} [id*="MSG_${idx}"]`);
+      const mensaje = (mensajeEl && mensajeEl.textContent.trim()) || '';
+      // Las celdas que contienen las notas tienen títulos / data attributes.
+      // Buscamos cualquier span con un número 0-10 dentro de las cells de la fila.
+      const cellsTexts = Array.from(tr.querySelectorAll('td')).map((td) => td.textContent.trim());
+      const numericCells = cellsTexts.filter((t) => /^\d{1,2}$/.test(t));
+      // Como heurística: tratamos todas las notas numéricas encontradas como
+      // "OActividades" para que el promedio se calcule.
+      const periodData = {
+        ReuCod: reuCod,
+        ReuDsc: (document.getElementById(`span_CTLREUDSC1_${idx}`) || {}).textContent || '',
+        Orales: '',
+        Escritos: '',
+        OActividades: numericCells.join(' '),
+        Mensaje: mensaje,
+        AsigPideRendimiento: !!document.getElementById(`vCALIFXREUCALIFCOD_${idx}`),
+        AsigPideJuicio: !!document.getElementById(`vCALIFXREUJUICIO_${idx}`),
+        EntregaHabilitada: /habilitado/i.test(mensaje) && !/no habilitado/i.test(mensaje),
+        CalifxReuJuicio: '',
+        CalifxReuCalifCod: '',
+        InasInjustificadas: '',
+        InasJustificadas: '',
+        InasFictas: '',
+      };
+      map.set(reuCod.trim(), periodData);
+    }
+    return map;
   }
 
   // Busca el botón a clickear para cerrar el popup. Primero el conocido por
@@ -736,6 +829,7 @@
     const t0 = Date.now();
     let stateChanged = false;
     let lastLog = 0;
+    let lastDumpAt = 0;
     while (Date.now() - t0 < timeoutMs) {
       if (abortSignal && abortSignal.aborted) return { changed: false, aborted: true };
       const pop = popupVisible();
@@ -751,12 +845,18 @@
         return { changed: true };
       }
 
-      if (Date.now() - lastLog > 10000 && log) {
-        const elapsed = Math.round((Date.now() - t0) / 1000);
+      const elapsed = Date.now() - t0;
+      if (elapsed - lastLog > 10000 && log) {
         const fase = stateChanged ? 'cargando próximo alumno' : 'esperando postback';
         const diag = inspectPage();
-        log(`   …${fase} (${elapsed}s, busy=${gxBusyAnywhere()}, filas=${diag.rows}, períodos=${diag.periods})`);
-        lastLog = Date.now();
+        log(`   …${fase} (${Math.round(elapsed / 1000)}s, busy=${gxBusyAnywhere()}, filas=${diag.rows}, períodos=${diag.periods}, reuCod=${diag.reuCodCount}, colDatosReu=${diag.colDatosReuCount}, gxSize=${diag.stateSize})`);
+        lastLog = elapsed;
+      }
+      // Auto-volcado cada 30s para trazabilidad cuando se traba.
+      if (stateChanged && elapsed - lastDumpAt > 30000 && log) {
+        log(`   ▼ auto-dump (${Math.round(elapsed / 1000)}s):`);
+        dumpDiagnostic(log);
+        lastDumpAt = elapsed;
       }
       await sleep(500);
     }
@@ -926,6 +1026,7 @@
         <button class="primary" data-act="run">Generar juicios (alumno actual)</button>
         <button class="primary alt" data-act="run-all">Procesar todo el grupo (auto)</button>
         <button class="danger" data-act="stop" hidden>⏹ Detener</button>
+        <button class="secondary" data-act="diag">🔍 Diagnóstico ahora</button>
         <div class="log" data-fld="log">Listo.</div>
       </div>
     `;
@@ -937,6 +1038,7 @@
       #siged-juicios-panel button.primary.alt{background:#059669}
       #siged-juicios-panel button.primary.alt:disabled{background:#4b5563}
       #siged-juicios-panel button.danger{background:#dc2626;color:#fff;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;font-weight:600}
+      #siged-juicios-panel button.secondary{background:#4b5563;color:#f9fafb;border:0;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:12px}
     `;
     panel.appendChild(extra);
 
@@ -969,6 +1071,12 @@
       if (act === 'toggle') { panel.classList.toggle('collapsed'); return; }
       if (act === 'stop') {
         if (abortController) abortController.abort();
+        return;
+      }
+      if (act === 'diag') {
+        log('🔍 Diagnóstico de la pantalla actual:');
+        dumpDiagnostic(log);
+        log('   (HTML completo y GXState raw en F12 → Console)');
         return;
       }
       if (act === 'run' || act === 'run-all') {
