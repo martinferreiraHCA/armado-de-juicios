@@ -56,8 +56,17 @@
   }
 
   function fireGxChange(el) {
+    // GeneXus persiste el valor del campo a su estado interno desde el
+    // handler onblur (ej. textarea: onblur="gx.evt.onblur(this,199)"). Si
+    // solo disparamos input/change, el valor visible cambia pero GX nunca
+    // lo "commitea" al SDT y al guardar se manda el valor viejo (vacío).
+    // Por eso simulamos toda la secuencia que dispara un usuario real:
+    // focus → input → change → blur.
+    try { el.focus(); } catch (_) { /* ignore */ }
     el.dispatchEvent(new Event('input', { bubbles: true }));
     el.dispatchEvent(new Event('change', { bubbles: true }));
+    try { el.blur(); } catch (_) { /* ignore */ }
+    el.dispatchEvent(new Event('blur', { bubbles: true }));
   }
 
   function readGxState() {
