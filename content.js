@@ -532,47 +532,56 @@
     return true;
   }
 
+  // Popups REALES de SIGED (modales overlay). El span id="DIAG" NO es un popup,
+  // es un label permanente de la sección "Evaluación diagnóstica interdisciplinaria"
+  // del cuerpo de la página, por eso no entra en esta lista.
+  // Mapeo conocido (instancia candersen):
+  //   SECTIONPOPUP        → mensajes generales, botón BTNCONTINUARPOPUP "Continuar"
+  //   SECTIONPOPUPDIAG    → popup diagnóstico,  botón BTNCERRARPOPUPDIAG  "Cerrar"
+  //   TABLEPANELES_MPAGE  → master page (sesión por expirar, etc.), botones MPAGE
+  const POPUP_MAP = [
+    { container: 'SECTIONPOPUPDIAG', confirmBtn: 'BTNCERRARPOPUPDIAG' },
+    { container: 'SECTIONPOPUP',     confirmBtn: 'BTNCONTINUARPOPUP' },
+  ];
+
   function popupVisible() {
-    // Primer pase: contenedores conocidos.
-    const fixedIds = ['SECTIONPOPUP', 'SECTIONPOPUPDIAG', 'DIAG', 'TBMSJPOPUP', 'TBMSJPOPUPDIAG'];
-    for (const id of fixedIds) {
-      const el = document.getElementById(id);
+    for (const p of POPUP_MAP) {
+      const el = document.getElementById(p.container);
       if (el && isVisible(el)) {
         const txt = (el.textContent || '').trim();
-        if (txt) return { id, text: txt.slice(0, 200), el };
+        if (txt) return { id: p.container, text: txt.slice(0, 200), el, knownBtn: p.confirmBtn };
       }
     }
-    // Segundo pase: cualquier elemento con id que contenga POPUP o DIAG y sea visible.
-    const all = document.querySelectorAll('[id*="POPUP"], [id*="Popup"], [id*="DIAG"], [id*="Diag"], [id*="MODAL"], [id*="Modal"]');
-    for (const el of all) {
-      if (!isVisible(el)) continue;
-      const txt = (el.textContent || '').trim();
-      if (txt && txt.length > 5 && txt.length < 1000) return { id: el.id, text: txt.slice(0, 200), el };
+    // Master-page popup: típico aviso de sesión por expirar.
+    const mpage = document.getElementById('TABLEPANELES_MPAGE');
+    if (mpage && isVisible(mpage)) {
+      const txt = (mpage.textContent || '').trim();
+      if (txt && txt.length > 5) return { id: 'TABLEPANELES_MPAGE', text: txt.slice(0, 200), el: mpage, knownBtn: 'BTNCERRARMASTARDE_MPAGE' };
     }
     return null;
   }
 
-  // Busca un botón dentro de un popup activo de SIGED para confirmarlo / cerrarlo.
-  // Prueba IDs conocidos, después texto afirmativo, y como último recurso
-  // botones de "Cerrar más tarde / Salir / Cancelar" para popups informativos
-  // (ej. EVALUACIÓN DIAGNÓSTICA INTERDISCIPLINARIA).
-  function findPopupConfirmButton(popupEl) {
+  // Busca el botón a clickear para cerrar el popup. Primero el conocido por
+  // contenedor; después IDs típicos; después texto afirmativo y, como
+  // último recurso, texto de "cerrar / cancelar".
+  function findPopupConfirmButton(popup) {
+    if (popup && popup.knownBtn) {
+      const el = document.getElementById(popup.knownBtn);
+      if (el && !el.disabled && isVisible(el)) return el;
+    }
     const ids = [
-      // Confirmación
-      'BTNCONTINUARPOPUP', 'BTNACEPTARPOPUP', 'BTNACEPTAR', 'BTNSI',
-      'BTNENTENDIDO_MPAGE', 'BTNCONTINUAR', 'BTNGUARDARPOPUP',
-      // Cerrar / saltear
-      'BTNCERRARMASTARDE_MPAGE', 'BTNCERRARPOPUPDIAG', 'BTNCERRARPOPUP',
-      'BTNSALIR_MPAGE', 'BTNSALIR', 'BTNVOLVER', 'BTNREGRESAR',
+      'BTNCERRARPOPUPDIAG', 'BTNCONTINUARPOPUP',
+      'BTNACEPTARPOPUP', 'BTNACEPTAR', 'BTNSI', 'BTNCONTINUAR', 'BTNGUARDARPOPUP',
+      'BTNENTENDIDO_MPAGE', 'BTNCERRARMASTARDE_MPAGE',
+      'BTNCERRARPOPUP', 'BTNVOLVER',
     ];
     for (const id of ids) {
       const el = document.getElementById(id);
       if (el && !el.disabled && isVisible(el)) return el;
     }
-    // Buscar por texto. Damos prioridad a "Continuar/Aceptar" sobre "Cerrar/Cancelar".
     const positivos = /^(s[ií]|aceptar|continuar|ok|confirmar|entendido|guardar)\b/i;
     const negativos = /^(cerrar(\s+m[aá]s\s+tarde)?|m[aá]s\s+tarde|saltar|omitir|salir|volver|cancelar|cerrar)\b/i;
-    const containers = popupEl ? [popupEl] : Array.from(document.querySelectorAll('[id*="POPUP"], [id*="Popup"], [id*="DIAG"], [id*="Diag"]'));
+    const containers = popup ? [popup.el] : POPUP_MAP.map((p) => document.getElementById(p.container)).filter(Boolean);
     let firstNeg = null;
     for (const c of containers) {
       if (!isVisible(c)) continue;
@@ -592,10 +601,9 @@
   function autoConfirmPopup() {
     const pop = popupVisible();
     if (!pop) return null;
-    const btn = findPopupConfirmButton(pop.el);
+    const btn = findPopupConfirmButton(pop);
     if (!btn) {
-      // Diagnóstico: dejá visible el HTML para investigar IDs/textos faltantes.
-      try { console.warn('[SIGED Juicios] popup sin botón confirmable:', pop.el.outerHTML.slice(0, 1500)); } catch (_) {}
+      try { console.warn('[SIGED Juicios] popup sin botón confirmable:', pop.id, pop.el.outerHTML.slice(0, 1500)); } catch (_) {}
       return { confirmed: false, text: pop.text };
     }
     clickLikeUser(btn);
@@ -667,9 +675,17 @@
       i += 1;
       log(`\n— Alumno #${i} —`);
       const stateBefore = readGxStateRaw();
-      const res = await procesarAlumnoActual(log, abortSignal);
+      let res;
+      try {
+        res = await procesarAlumnoActual(log, abortSignal);
+      } catch (err) {
+        log(`✗ error procesando alumno: ${err.message || err}`);
+        res = { ok: false, error: true };
+      }
       if (res.aborted) { log('⏹ Detenido por el usuario.'); return; }
-      if (!res.ok) { log('Detengo: no pude procesar este alumno.'); return; }
+      if (!res.ok) {
+        log('No pude procesar este alumno; intento avanzar igual con "Guardar y siguiente"…');
+      }
 
       if (res.alumno && procesados.has(res.alumno)) {
         log(`⏹ "${res.alumno}" ya estaba procesado. Asumo fin de grupo.`);
