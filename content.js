@@ -129,27 +129,34 @@
       if (best) return best;
     }
     // Fallback DOM: el nombre del alumno suele aparecer como caption en
-    // distintos contenedores. Probamos varios.
+    // distintos contenedores. Probamos varios. Solo consideramos elementos
+    // VISIBLES — los popups (TABLETITULOCONTENIDO2/3) tienen "Atención!" o
+    // "EVALUACIÓN DIAGNÓSTICA…" dentro pero están display:none, y agarrarlos
+    // como "alumno" rompe todo.
     const candIds = [
       'span_TXTTITULO', 'TXTTITULO',
       'span_TXTSUBTITULO', 'TXTSUBTITULO',
       'TBL_ALUMNO', 'TBLLIBDATOS',
-      'TABLETITULOCONTENIDO', 'TABLETITULOCONTENIDO2', 'TABLETITULOCONTENIDO3',
+      'TABLETITULOCONTENIDO',
     ];
     for (const id of candIds) {
       const el = document.getElementById(id);
       if (!el) continue;
+      if (!isVisible(el)) continue;
       const t = (el.textContent || '').trim();
       const m = t.match(/alumno:\s*([^\n\r]{2,120})/i);
       if (m) return m[1].trim();
       // Algunos titulares solo muestran el nombre sin "alumno:".
-      if (t && t.length > 4 && t.length < 120 && /[A-ZÁÉÍÓÚÑ][a-záéíóúñ]/.test(t) && !/^cierre|^libreta|^seleccione/i.test(t)) {
+      if (t && t.length > 4 && t.length < 120
+          && /[A-ZÁÉÍÓÚÑ][a-záéíóúñ]/.test(t)
+          && !/^cierre|^libreta|^seleccione|^atenci|^evaluaci|^promedio/i.test(t)) {
         return t;
       }
     }
-    // Último recurso: cualquier span/td con texto que empiece con "alumno:".
+    // Último recurso: cualquier span/td visible cuyo texto empiece con "alumno:".
     const all = document.querySelectorAll('span, h1, h2, h3, td, div');
     for (const el of all) {
+      if (!isVisible(el)) continue;
       const t = (el.textContent || '').trim();
       if (t.length > 200) continue;
       const m = t.match(/^alumno:\s*(.+)$/i);
@@ -529,6 +536,20 @@
     return !!document.querySelector('[data-gx-evt-inprogress="true"]');
   }
 
+  // "Huella" del alumno actual: concatena los valores de todos los selects de
+  // calificación y los textareas de juicio, más los textos numéricos que se
+  // ven en las celdas. Es la señal MÁS confiable de navegación cuando GXState
+  // queda en "{}" tras el primer postback (en candersen.siged.com.uy).
+  function studentFingerprint() {
+    const califs = $$('select[id^="vCALIFXREUCALIFCOD_"]')
+      .map((s) => s.value || '').join(',');
+    const juicios = $$('textarea[id^="vCALIFXREUJUICIO_"]')
+      .map((t) => t.value || '').join('|');
+    const cells = $$('#GridjuiciosContainerTbl span.ReadonlyAttributeNoBlock')
+      .map((s) => (s.textContent || '').trim()).filter(Boolean).join(' ');
+    return `${califs}#${juicios}#${cells}`;
+  }
+
   async function waitForGxIdle(idOrEl, timeoutMs, abortSignal) {
     const t0 = Date.now();
     while (Date.now() - t0 < timeoutMs) {
@@ -867,9 +888,15 @@
   // Espera a que el GXState (input hidden de GeneXus) cambie, indicando que
   // SIGED hizo el postback y cargó al siguiente alumno; después espera a que
   // la grilla quede lista de nuevo.
-  async function waitForNextStudent(prevStateRaw, timeoutMs, abortSignal, log) {
+  // Espera la navegación al siguiente alumno usando dos señales en paralelo:
+  //   1) GXState raw cambia (funciona en la primera transición).
+  //   2) studentFingerprint cambia (funciona siempre, incluso si GXState
+  //      queda como "{}" después del primer save — caso real en candersen).
+  // Cuando alguna cambia, esperamos a que GX no esté ocupado y que la grilla
+  // del nuevo alumno tenga datos para procesarla.
+  async function waitForNextStudent(prevStateRaw, prevFingerprint, timeoutMs, abortSignal, log) {
     const t0 = Date.now();
-    let stateChanged = false;
+    let navDetected = false;
     let lastLog = 0;
     let lastDumpAt = 0;
     while (Date.now() - t0 < timeoutMs) {
@@ -877,11 +904,15 @@
       const pop = popupVisible();
       if (pop) return { changed: false, popup: `${pop.id}: ${pop.text}` };
 
-      if (!stateChanged) {
-        const cur = readGxStateRaw();
-        if (cur && cur !== prevStateRaw) {
-          stateChanged = true;
-          if (log) log('   → postback registrado; esperando que cargue la grilla del siguiente alumno…');
+      if (!navDetected) {
+        const curState = readGxStateRaw();
+        const curFp = studentFingerprint();
+        if ((curState && curState !== prevStateRaw) || (curFp && curFp !== prevFingerprint)) {
+          navDetected = true;
+          if (log) {
+            const motivo = (curState && curState !== prevStateRaw) ? 'GXState cambió' : 'huella del alumno cambió';
+            log(`   → navegación detectada (${motivo}); esperando que termine de pintar la grilla…`);
+          }
         }
       } else if (gridReady() && !gxBusyAnywhere()) {
         return { changed: true };
@@ -889,20 +920,19 @@
 
       const elapsed = Date.now() - t0;
       if (elapsed - lastLog > 10000 && log) {
-        const fase = stateChanged ? 'cargando próximo alumno' : 'esperando postback';
+        const fase = navDetected ? 'cargando próximo alumno' : 'esperando navegación';
         const diag = inspectPage();
-        log(`   …${fase} (${Math.round(elapsed / 1000)}s, busy=${gxBusyAnywhere()}, filas=${diag.rows}, períodos=${diag.periods}, reuCod=${diag.reuCodCount}, colDatosReu=${diag.colDatosReuCount}, gxSize=${diag.stateSize})`);
+        log(`   …${fase} (${Math.round(elapsed / 1000)}s, busy=${gxBusyAnywhere()}, filas=${diag.rows}, períodos=${diag.periods}, gxSize=${diag.stateSize})`);
         lastLog = elapsed;
       }
-      // Auto-volcado cada 30s para trazabilidad cuando se traba.
-      if (stateChanged && elapsed - lastDumpAt > 30000 && log) {
+      if (navDetected && elapsed - lastDumpAt > 30000 && log) {
         log(`   ▼ auto-dump (${Math.round(elapsed / 1000)}s):`);
         dumpDiagnostic(log);
         lastDumpAt = elapsed;
       }
       await sleep(500);
     }
-    return { changed: false, timeout: !stateChanged, gridStuck: stateChanged };
+    return { changed: false, timeout: !navDetected, gridStuck: navDetected };
   }
 
   async function procesarTodos(log, abortSignal) {
@@ -945,6 +975,7 @@
       i += 1;
       log(`\n— Alumno #${i} —`);
       const stateBefore = readGxStateRaw();
+      const fingerprintBefore = studentFingerprint();
       let res;
       try {
         res = await procesarAlumnoActual(log, abortSignal);
@@ -1011,7 +1042,7 @@
       // GX terminó el evento; ahora esperamos a que la grilla se repueble
       // con el siguiente alumno (o el GXState cambie, o aparezca un popup).
       // Timeout generoso porque candersen.siged es un sitio lento.
-      const wait = await waitForNextStudent(stateBefore, 90000, abortSignal, log);
+      const wait = await waitForNextStudent(stateBefore, fingerprintBefore, 90000, abortSignal, log);
       if (wait.aborted) { log('⏹ Detenido por el usuario.'); return; }
       if (wait.popup) {
         log(`SIGED mostró un mensaje: "${wait.popup}". Detengo para que lo revises a mano.`);
