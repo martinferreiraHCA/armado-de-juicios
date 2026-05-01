@@ -57,6 +57,13 @@
     try { return JSON.parse(input.value); } catch { return null; }
   }
 
+  // Devuelve el value crudo del input GXState. Cambia en cada postback de SIGED,
+  // así que sirve como señal "la página avanzó" después de Guardar y siguiente.
+  function readGxStateRaw() {
+    const input = document.querySelector('input[name="GXState"]');
+    return input ? input.value : null;
+  }
+
   function walkObjects(node, visit, seen = new WeakSet()) {
     if (!node || typeof node !== 'object') return;
     if (seen.has(node)) return;
@@ -96,20 +103,60 @@
     });
   }
 
-  function detectAlumno() {
-    const candidates = $$('span, h1, h2, h3, td');
+  // Saca el alumno del GXState (las captions de SIGED contienen literalmente
+  // "alumno: NOMBRE APELLIDO ..."). Cae al DOM si no aparece en el state.
+  function detectAlumno(state) {
+    state = state || readGxState();
+    if (state) {
+      let best = '';
+      walkObjects(state, (obj) => {
+        for (const v of Object.values(obj)) {
+          if (typeof v !== 'string') continue;
+          const m = v.match(/alumno:\s*([^<\n\r"]{2,120})/i);
+          if (m) {
+            const candidate = m[1].trim();
+            if (candidate && candidate.length > best.length && candidate.length < 120) best = candidate;
+          }
+        }
+      });
+      if (best) return best;
+    }
+    const candidates = $$('span, h1, h2, h3, td, div');
     for (const el of candidates) {
       const t = (el.textContent || '').trim();
-      if (/^alumno:\s*/i.test(t) && t.length < 120) return t.replace(/^alumno:\s*/i, '').trim();
+      const m = t.match(/^alumno:\s*(.+)$/i);
+      if (m && m[1].length < 120) return m[1].trim();
     }
     return '';
   }
 
-  function detectLibreta() {
-    const sel = document.querySelector('[id*="LIBRETA"][id*="Caption"], [id*="Libreta"][id*="Caption"]');
-    if (sel && sel.textContent) return sel.textContent.trim();
-    const dd = $$('span').find((s) => /Libreta\s*@/i.test(s.textContent || ''));
-    return dd ? dd.textContent.trim() : '';
+  // Igual para libreta. Se filtra explícitamente el item del menú lateral
+  // ("Libreta @") que confundía al detector anterior.
+  function detectLibreta(state) {
+    state = state || readGxState();
+    if (state) {
+      let best = '';
+      walkObjects(state, (obj) => {
+        for (const [k, v] of Object.entries(obj)) {
+          if (typeof v !== 'string' || !v.trim()) continue;
+          // Captions con "Libreta NN ..." o keys con LibretaDsc/LibDDsc.
+          if (/^libreta\s+\S/i.test(v) && v.length < 200 && !/libreta\s*@/i.test(v)) {
+            if (v.length > best.length) best = v.trim();
+          }
+          if (/(LibretaDsc|LibDDsc|LibretaNom|LibretaNombre)/i.test(k) && v.length < 200) {
+            if (v.length > best.length) best = v.trim();
+          }
+        }
+      });
+      if (best) return best;
+    }
+    // DOM, evitando el menú lateral.
+    const candidates = document.querySelectorAll('#TBL_ALUMNO span, #TBLLIBDATOS span, #TABLETITULOCONTENIDO span, [id*="LIBRETA"][id*="Caption"]');
+    for (const el of candidates) {
+      const t = (el.textContent || '').trim();
+      if (t && t.length < 200 && !/^libreta\s*@?\s*$/i.test(t)) return t;
+    }
+    return '';
   }
 
   // ---------------------------------------------------------------------------
@@ -312,8 +359,8 @@
     if (!periodMap.size) { log('No se encontraron datos de períodos en GXState.'); return { ok: false }; }
     const rows = collectGridRows();
     if (!rows.length) { log('No se encontró la grilla de períodos.'); return { ok: false }; }
-    const alumno = detectAlumno();
-    const libreta = detectLibreta();
+    const alumno = detectAlumno(state);
+    const libreta = detectLibreta(state);
     log(`Alumno: ${alumno || '?'} · Libreta: ${libreta || '?'} · Filas: ${rows.length}`);
     for (const row of rows) {
       if (abortSignal && abortSignal.aborted) return { ok: false, alumno, aborted: true };
@@ -344,18 +391,46 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
-  // Espera a que cambie el alumno mostrado o se agote el timeout.
-  async function esperarSiguienteAlumno(prevAlumno, timeoutMs = 30000, abortSignal) {
+  // Devuelve true cuando hay grilla con filas y períodos en GXState (alumno listo).
+  function gridReady() {
+    const rows = $$('#GridjuiciosContainerTbl > tbody > tr[id^="GridjuiciosContainerRow_"]');
+    if (!rows.length) return false;
+    const state = readGxState();
+    if (!state) return false;
+    return collectPeriodDataFromState(state).size > 0;
+  }
+
+  async function waitForGridReady(timeoutMs, abortSignal) {
+    const t0 = Date.now();
+    while (Date.now() - t0 < timeoutMs) {
+      if (abortSignal && abortSignal.aborted) return { ready: false, aborted: true };
+      if (gridReady()) return { ready: true };
+      await sleep(400);
+    }
+    return { ready: false, timeout: true };
+  }
+
+  // Espera a que el GXState (input hidden de GeneXus) cambie, indicando que
+  // SIGED hizo el postback y cargó al siguiente alumno; después espera a que
+  // la grilla quede lista de nuevo.
+  async function waitForNextStudent(prevStateRaw, timeoutMs, abortSignal) {
     const t0 = Date.now();
     while (Date.now() - t0 < timeoutMs) {
       if (abortSignal && abortSignal.aborted) return { changed: false, aborted: true };
-      await sleep(500);
-      // Si aparece un popup modal de SIGED puede ser fin de listado o confirmación.
+      // Popup de SIGED (advertencias, confirmaciones, fin de listado).
       const popup = document.getElementById('SECTIONPOPUP');
-      const popupVisible = popup && popup.offsetParent !== null && popup.textContent.trim();
-      if (popupVisible) return { changed: false, popup: popup.textContent.trim().slice(0, 200) };
-      const cur = detectAlumno();
-      if (cur && cur !== prevAlumno) return { changed: true, alumno: cur };
+      if (popup && popup.offsetParent !== null && popup.textContent.trim()) {
+        return { changed: false, popup: popup.textContent.trim().slice(0, 200) };
+      }
+      const cur = readGxStateRaw();
+      if (cur && cur !== prevStateRaw) {
+        // GXState cambió: esperar a que la grilla del nuevo alumno esté lista.
+        const ready = await waitForGridReady(timeoutMs - (Date.now() - t0), abortSignal);
+        if (ready.aborted) return { changed: false, aborted: true };
+        if (!ready.ready) return { changed: false, gridStuck: true };
+        return { changed: true };
+      }
+      await sleep(400);
     }
     return { changed: false, timeout: true };
   }
@@ -365,11 +440,17 @@
     let i = 0;
     while (true) {
       if (abortSignal.aborted) { log('⏹ Detenido por el usuario.'); return; }
+
+      const ready = await waitForGridReady(15000, abortSignal);
+      if (ready.aborted) { log('⏹ Detenido por el usuario.'); return; }
+      if (!ready.ready) { log('La grilla no quedó lista a tiempo. Detengo.'); return; }
+
       i += 1;
       log(`\n— Alumno #${i} —`);
+      const stateBefore = readGxStateRaw();
       const res = await procesarAlumnoActual(log, abortSignal);
-      if (!res.ok) { log('Detengo: no pude procesar este alumno.'); return; }
       if (res.aborted) { log('⏹ Detenido por el usuario.'); return; }
+      if (!res.ok) { log('Detengo: no pude procesar este alumno.'); return; }
 
       if (res.alumno && procesados.has(res.alumno)) {
         log(`⏹ "${res.alumno}" ya estaba procesado. Asumo fin de grupo.`);
@@ -377,7 +458,6 @@
       }
       if (res.alumno) procesados.add(res.alumno);
 
-      // Pequeña pausa para que el usuario pueda revisar antes del guardado.
       await sleep(400);
       if (abortSignal.aborted) { log('⏹ Detenido por el usuario antes de guardar.'); return; }
 
@@ -388,17 +468,22 @@
       }
       log('💾 Guardando y avanzando al siguiente alumno…');
 
-      const wait = await esperarSiguienteAlumno(res.alumno, 30000, abortSignal);
+      const wait = await waitForNextStudent(stateBefore, 45000, abortSignal);
       if (wait.aborted) { log('⏹ Detenido por el usuario.'); return; }
       if (wait.popup) {
         log(`SIGED mostró un mensaje: "${wait.popup}". Detengo para que lo revises a mano.`);
         return;
       }
-      if (!wait.changed) {
-        log('No detecté cambio de alumno tras 30s. Detengo (¿último alumno o error?).');
+      if (wait.gridStuck) {
+        log('SIGED postbackeó pero la grilla no se repobló. Asumo fin de grupo.');
         return;
       }
-      log(`→ Nuevo alumno: ${wait.alumno}`);
+      if (!wait.changed) {
+        log('No detecté postback tras 45s. Detengo (¿último alumno o error?).');
+        return;
+      }
+      const nuevo = detectAlumno();
+      log(`→ Nuevo alumno: ${nuevo || '(sin nombre detectado)'}`);
     }
   }
 
