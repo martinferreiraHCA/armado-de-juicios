@@ -450,42 +450,51 @@
       log('   …GX todavía ocupado, espero a que termine de pintar…');
       await waitForGxIdle('BTNGUARDARYSIGUIENTE', 15000, abortSignal);
     }
-    const state = readGxState();
-    if (!state) { log('No se encontró GXState. ¿Estás en la pantalla de cierre por alumno?'); return { ok: false }; }
-    let periodMap = collectPeriodDataFromState(state);
-    let usandoFallback = false;
-    if (!periodMap.size) {
-      // SIGED no trae datos de período en GXState para este alumno (a veces
-      // pasa entre alumnos por lazy-load). Intentamos scrapeando el DOM,
-      // pero si la primera pasada no encuentra notas con período habilitado,
-      // hacemos retry tras 1.5s (lazy-load probable).
-      log('   GXState sin datos de período — intento extraer del DOM…');
+
+    // FUENTE PRIMARIA: el DOM (FreeStyleGrid + GridjuiciosContainerTbl).
+    // Es lo que el/la docente ve en pantalla y lo que el modo debug visual
+    // puede pintar. GXState solo se usa como red de seguridad si el DOM
+    // está completamente vacío.
+    let periodMap = extractPeriodsFromDom();
+    let fuente = 'DOM (FreeStyleGrid)';
+    // Reintento corto si SIGED todavía está renderizando las notas.
+    const algunaConNotas = (m) => Array.from(m.values()).some((p) => (p.OActividades || p.Orales || p.Escritos || '').trim().length);
+    if (periodMap.size && !algunaConNotas(periodMap)) {
+      log('   …no detecté notas en el primer scrapeo, espero 2s y reintento (lazy-load)…');
+      await sleep(2000);
       periodMap = extractPeriodsFromDom();
-      const algunaConNotas = Array.from(periodMap.values()).some((p) => (p.OActividades || p.Orales || p.Escritos || '').trim().length);
-      if (!algunaConNotas) {
-        log('   …sin notas en el DOM, esperando 2s y reintentando (probable lazy-load)…');
-        await sleep(2000);
-        periodMap = extractPeriodsFromDom();
-      }
-      // Log de lo que encontramos por período (diagnóstico).
-      log('   📊 Notas detectadas por período:');
-      for (const p of periodMap.values()) {
-        const o = (p.Orales || '').trim().split(/\s+/).filter(Boolean).length;
-        const e = (p.Escritos || '').trim().split(/\s+/).filter(Boolean).length;
-        const a = (p.OActividades || '').trim().split(/\s+/).filter(Boolean).length;
-        const total = o + e + a;
-        const tag = p.EntregaHabilitada ? ' [HABILITADO]' : '';
-        const aviso = p.EntregaHabilitada && total === 0 ? ' ⚠ habilitado pero sin notas detectadas' : '';
-        log(`      ${p.ReuDsc || p.ReuCod}: O=${o} E=${e} A=${a}${p.RendVisible ? ` R=${p.RendVisible}` : ''}${p.NotasInsuficientes ? ` (${p.NotasInsuficientes} insuf.)` : ''}${tag}${aviso}`);
-      }
-      usandoFallback = true;
     }
-    if (!periodMap.size) { log('No se encontraron datos de períodos ni en GXState ni en el DOM.'); return { ok: false }; }
+    // Red de seguridad: si el DOM está vacío, recurrimos a GXState.
+    if (!periodMap.size) {
+      log('   DOM sin períodos. Probando con GXState…');
+      const state = readGxState();
+      if (state) {
+        periodMap = collectPeriodDataFromState(state);
+        if (periodMap.size) fuente = 'GXState (fallback)';
+      }
+    }
+    if (!periodMap.size) { log('No se encontraron datos de períodos ni en el DOM ni en GXState.'); return { ok: false }; }
+
     const rows = collectGridRows();
     if (!rows.length) { log('No se encontró la grilla de períodos.'); return { ok: false }; }
-    const alumno = detectAlumno(state);
-    const libreta = detectLibreta(state);
-    log(`Alumno: ${alumno || '?'} · Libreta: ${libreta || '?'} · Filas: ${rows.length}${usandoFallback ? ' · fuente: DOM (fallback)' : ''}`);
+    const stateForName = readGxState();
+    const alumno = detectAlumno(stateForName);
+    const libreta = detectLibreta(stateForName);
+    log(`Alumno: ${alumno || '?'} · Libreta: ${libreta || '?'} · Filas: ${rows.length} · fuente: ${fuente}`);
+
+    // Log por período: vemos exactamente cuántas notas se extrajeron y
+    // si algún período habilitado quedó sin notas (mismatch).
+    log('   📊 Notas detectadas por período (desde el DOM visible):');
+    for (const p of periodMap.values()) {
+      const o = (p.Orales || '').trim().split(/\s+/).filter(Boolean).length;
+      const e = (p.Escritos || '').trim().split(/\s+/).filter(Boolean).length;
+      const a = (p.OActividades || '').trim().split(/\s+/).filter(Boolean).length;
+      const total = o + e + a;
+      const tag = p.EntregaHabilitada ? ' [HABILITADO]' : '';
+      const aviso = p.EntregaHabilitada && total === 0 ? ' ⚠ habilitado pero sin notas detectadas' : '';
+      log(`      ${p.ReuDsc || p.ReuCod}: O=${o} E=${e} A=${a}${p.RendVisible ? ` R=${p.RendVisible}` : ''}${p.NotasInsuficientes ? ` (${p.NotasInsuficientes} insuf.)` : ''}${tag}${aviso}`);
+    }
+
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       if (abortSignal && abortSignal.aborted) return { ok: false, alumno, aborted: true };
