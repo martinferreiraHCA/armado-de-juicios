@@ -426,15 +426,29 @@
 
   // Procesa la grilla completa del alumno actual. Devuelve resumen.
   async function procesarAlumnoActual(log, abortSignal) {
+    // Pequeña espera defensiva: en navegaciones GX a veces termina el
+    // postback pero los grades aparecen 1-2s después por lazy-load.
+    if (gxBusyAnywhere()) {
+      log('   …GX todavía ocupado, espero a que termine de pintar…');
+      await waitForGxIdle('BTNGUARDARYSIGUIENTE', 15000, abortSignal);
+    }
     const state = readGxState();
     if (!state) { log('No se encontró GXState. ¿Estás en la pantalla de cierre por alumno?'); return { ok: false }; }
     let periodMap = collectPeriodDataFromState(state);
     let usandoFallback = false;
     if (!periodMap.size) {
       // SIGED no trae datos de período en GXState para este alumno (a veces
-      // pasa entre alumnos por lazy-load). Intentamos scrapeando el DOM.
+      // pasa entre alumnos por lazy-load). Intentamos scrapeando el DOM,
+      // pero si la primera pasada no encuentra notas con período habilitado,
+      // hacemos retry tras 1.5s (lazy-load probable).
       log('   GXState sin datos de período — intento extraer del DOM…');
       periodMap = extractPeriodsFromDom();
+      const algunaConNotas = Array.from(periodMap.values()).some((p) => (p.OActividades || '').trim().length);
+      if (!algunaConNotas) {
+        log('   …sin notas en el DOM, esperando 2s y reintentando (probable lazy-load)…');
+        await sleep(2000);
+        periodMap = extractPeriodsFromDom();
+      }
       usandoFallback = true;
     }
     if (!periodMap.size) { log('No se encontraron datos de períodos ni en GXState ni en el DOM.'); return { ok: false }; }
@@ -798,19 +812,22 @@
         && getComputedStyle(juicioTa).display !== 'none';
       const habilitado = enabledCalif || enabledJuicio;
 
-      // Notas: cualquier <span class="ReadonlyAttributeNoBlock"> dentro de la
-      // fila cuyo texto sea un número 0-10. Esos spans incluyen el title con
-      // la fecha + descripción de la tarea.
-      const noteSpans = tr.querySelectorAll('span.ReadonlyAttributeNoBlock');
+      // Notas: cualquier span dentro de la fila cuyo texto sea un número 0-10.
+      // No filtramos por clase porque GX usa nombres con espacios variables;
+      // tampoco por visibilidad estricta porque las sub-tablas plegables a
+      // veces tienen los grades dentro pero con la fila aún pintando.
       const numericNotes = [];
       const notasConTitle = [];
-      for (const span of noteSpans) {
+      const allSpans = tr.querySelectorAll('span');
+      for (const span of allSpans) {
         const t = (span.textContent || '').trim();
-        if (/^\d{1,2}([.,]\d+)?$/.test(t)) {
-          numericNotes.push(t);
-          const title = (span.getAttribute('title') || '').trim();
-          notasConTitle.push(title ? `${t} (${title})` : t);
-        }
+        if (!t) continue;
+        if (!/^\d{1,2}([.,]\d{1,2})?$/.test(t)) continue;
+        const num = parseFloat(t.replace(',', '.'));
+        if (Number.isNaN(num) || num < 0 || num > 10) continue;
+        numericNotes.push(t);
+        const title = (span.getAttribute('title') || '').trim();
+        notasConTitle.push(title ? `${t} (${title})` : t);
       }
 
       map.set(reuCod.trim(), {
@@ -975,7 +992,6 @@
       i += 1;
       log(`\n— Alumno #${i} —`);
       const stateBefore = readGxStateRaw();
-      const fingerprintBefore = studentFingerprint();
       let res;
       try {
         res = await procesarAlumnoActual(log, abortSignal);
@@ -1007,6 +1023,11 @@
       if (!idle1.idle) {
         log('GeneXus sigue procesando los cambios después de 20s. Reintento igual…');
       }
+      // Capturamos la huella DESPUÉS del fill y justo antes del click. Si la
+      // capturáramos al inicio (antes del fill) terminaría siendo similar al
+      // estado en que SIGED renderiza al alumno SIGUIENTE (campos vacíos),
+      // y waitForNextStudent nunca detectaría la navegación.
+      const fingerprintBefore = studentFingerprint();
       if (abortSignal.aborted) { log('⏹ Detenido por el usuario antes de guardar.'); return; }
 
       const clicked = clickGuardarYSiguiente();
