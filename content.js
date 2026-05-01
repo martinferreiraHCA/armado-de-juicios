@@ -11,8 +11,8 @@
     maxChars: 280,
     tone: 'Profesional, claro, conciso, en español rioplatense. Siempre en TERCERA PERSONA refiriéndose al/la estudiante (nunca "vos", "tú" ni "usted"). Evitar adjetivos exagerados y opiniones sobre la familia.',
     compararConAnterior: true,
-    rubrica1: 'Indica ausencia o falta de entrega del trabajo.',
-    rubrica24: 'Debe mejorar la calidad de sus producciones.',
+    rubrica1: 'No entregó el trabajo o no presentó evidencia (ausencia de producción). Mencionar como entrega pendiente cuando corresponda.',
+    rubrica24: 'Producciones insuficientes (notas menores a 5). Reconocer las dificultades pero adoptar tono CONSTRUCTIVO y POSITIVO: subrayar el margen de mejora y los aspectos puntuales a fortalecer; evitar etiquetas desmoralizantes.',
     rubrica56: 'Trabajo satisfactorio: cumple con lo solicitado.',
     rubrica78: 'Muy buen trabajo: se destaca en varios aspectos.',
     rubrica910: 'Trabajo destacado: producción de alta calidad.',
@@ -251,10 +251,10 @@
   function rubricaResumen(c, promedio) {
     if (!c.total) return 'No hay notas numéricas en el período.';
     const partes = [];
-    if (c.ausencias) partes.push(`${c.ausencias} ausencia(s) o no entrega(s) (notas iguales a 1)`);
-    if (c.aMejorar) partes.push(`${c.aMejorar} nota(s) entre 2 y 4 (debe mejorar la calidad de sus producciones)`);
-    if (c.buenas) partes.push(`${c.buenas} nota(s) entre 5 y 8 (trabajo suficiente o bueno a destacar)`);
-    if (c.destacadas) partes.push(`${c.destacadas} nota(s) de 9 o 10 (trabajo muy destacado)`);
+    if (c.ausencias) partes.push(`${c.ausencias} ausencia(s) / no entrega(s) — nota 1`);
+    if (c.aMejorar) partes.push(`${c.aMejorar} nota(s) entre 2 y 4 — insuficientes con margen de mejora (tono positivo)`);
+    if (c.buenas) partes.push(`${c.buenas} nota(s) entre 5 y 8 — satisfactorio o muy bueno`);
+    if (c.destacadas) partes.push(`${c.destacadas} nota(s) de 9 o 10 — destacadas`);
     partes.push(`Promedio: ${promedio == null ? 'N/D' : promedio.toFixed(2)}`);
     return partes.join('; ') + '.';
   }
@@ -268,12 +268,14 @@
       'No inventes datos: usá únicamente la información provista. No menciones nombres de tareas concretas si no se pasan.',
       'Sé breve y concreto: una o dos oraciones bastan.',
       'RÚBRICA OBLIGATORIA al interpretar las notas (definida por el/la docente):',
-      `  • Nota 1: ${cfg.rubrica1}`,
-      `  • Notas 2 a 4: ${cfg.rubrica24}`,
+      `  • Nota 1 (ausencia / no entrega): ${cfg.rubrica1}`,
+      `  • Notas 2 a 4 (insuficientes, < 5 estricto): ${cfg.rubrica24}`,
       `  • Notas 5 a 6: ${cfg.rubrica56}`,
       `  • Notas 7 a 8: ${cfg.rubrica78}`,
       `  • Notas 9 a 10: ${cfg.rubrica910}`,
-      'Si conviven notas en distintos rangos, equilibrá lo positivo con lo a mejorar (por ejemplo: "logra X, aunque debe mejorar Y").',
+      'Distinción importante: NO confundas "1" (ausencia) con "2-4" (insuficiencia con margen de mejora). El 1 indica que no hubo evidencia/producción; el 2-4 indica que sí hubo producción pero por debajo de lo esperado.',
+      'Cuando haya notas 2-4 redactá en tono CONSTRUCTIVO y POSITIVO: reconocer la dificultad, pero centrarse en el margen de mejora y aspectos a fortalecer. Evitá etiquetas desmoralizantes ("mal", "muy bajo", "preocupante").',
+      'Si conviven notas en distintos rangos, equilibrá lo positivo con lo a mejorar (por ejemplo: "logra X, aunque debe profundizar en Y").',
     ];
     if (cfg.compararConAnterior) {
       lines.push('Cuando se incluya el "Historial de períodos anteriores", usalo para describir el PROCESO del/la estudiante: progreso, mantenimiento o retroceso respecto al período inmediato anterior. Evitá repetir literalmente juicios anteriores.');
