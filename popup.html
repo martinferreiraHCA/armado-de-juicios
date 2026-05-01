@@ -54,6 +54,24 @@
     Contrastar con períodos anteriores (evaluación de proceso)
   </label>
 
+  <h2>Rango de Rend (prorrateo)</h2>
+  <label class="check">
+    <input type="checkbox" id="rendUsarRango">
+    Normalizar Rend a un rango personalizado
+  </label>
+  <div class="row">
+    <label>Nota mínima
+      <input type="number" id="rendMin" min="1" max="10" step="0.5">
+    </label>
+    <label>Nota máxima
+      <input type="number" id="rendMax" min="1" max="10" step="0.5">
+    </label>
+  </div>
+  <p class="hint" style="margin:0 0 8px 0">
+    Mapea linealmente el promedio (escala 1-10) a tu rango.
+    Ej: min=4, max=7 → un promedio 5 se prorratea a 5,33.
+  </p>
+
   <h2>Rúbrica (qué significa cada nota)</h2>
   <fieldset>
     <legend>Rangos numéricos</legend>

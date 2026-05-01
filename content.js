@@ -11,6 +11,9 @@
     maxChars: 280,
     tone: 'Profesional, claro, conciso, en español rioplatense. Siempre en TERCERA PERSONA refiriéndose al/la estudiante (nunca "vos", "tú" ni "usted"). Evitar adjetivos exagerados y opiniones sobre la familia.',
     compararConAnterior: true,
+    rendUsarRango: false,
+    rendMin: 4,
+    rendMax: 7,
     rubrica1: 'No entregó el trabajo o no presentó evidencia (ausencia de producción). Mencionar como entrega pendiente cuando corresponda.',
     rubrica24: 'Producciones insuficientes (notas menores a 5). Reconocer las dificultades pero adoptar tono CONSTRUCTIVO y POSITIVO: subrayar el margen de mejora y los aspectos puntuales a fortalecer; evitar etiquetas desmoralizantes.',
     rubrica56: 'Trabajo satisfactorio: cumple con lo solicitado.',
@@ -383,12 +386,21 @@
 
     let rendCompletado = null;
     if (periodData.AsigPideRendimiento && promedio != null && row.califSelect) {
-      const opt = elegirOpcionMasCercana(row.califSelect, promedio);
+      // Si el docente activó el rango personalizado, prorrateamos el promedio
+      // (escala 1-10) al rango configurado [rendMin, rendMax] linealmente.
+      let promedioFinal = promedio;
+      let prorrateoLog = '';
+      if (CFG.rendUsarRango && CFG.rendMin >= 1 && CFG.rendMax <= 10 && CFG.rendMin < CFG.rendMax) {
+        const clamped = Math.max(1, Math.min(10, promedio));
+        promedioFinal = CFG.rendMin + (clamped - 1) / 9 * (CFG.rendMax - CFG.rendMin);
+        prorrateoLog = ` → prorrateado a ${promedioFinal.toFixed(2)} (rango ${CFG.rendMin}-${CFG.rendMax})`;
+      }
+      const opt = elegirOpcionMasCercana(row.califSelect, promedioFinal);
       if (opt) {
         setNativeValue(row.califSelect, opt.value);
         fireGxChange(row.califSelect);
         rendCompletado = opt.textContent.trim();
-        debugViz.mark(row.califSelect, debugViz.colors.filled, `✓ Rend=${rendCompletado} (avg ${promedio.toFixed(2)})`);
+        debugViz.mark(row.califSelect, debugViz.colors.filled, `✓ Rend=${rendCompletado} (avg ${promedio.toFixed(2)}${prorrateoLog})`);
       }
     }
 
@@ -1630,6 +1642,7 @@
       if (CFG.apiKey) {
         const partes = [`Modelo: ${CFG.model}`, `Máx ${CFG.maxChars} chars`, '3ra persona'];
         if (CFG.compararConAnterior) partes.push('+ contraste con período anterior');
+        if (CFG.rendUsarRango && CFG.rendMin < CFG.rendMax) partes.push(`Rend ${CFG.rendMin}-${CFG.rendMax}`);
         s.textContent = partes.join(' · ');
       } else {
         s.innerHTML = 'Falta API key. Abrí el ícono de la extensión para configurarla.';
