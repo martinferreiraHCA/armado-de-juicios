@@ -455,6 +455,8 @@
     // Es lo que el/la docente ve en pantalla y lo que el modo debug visual
     // puede pintar. GXState solo se usa como red de seguridad si el DOM
     // está completamente vacío.
+    const evalCount = document.querySelectorAll('table.beTableLibretaEval').length;
+    log(`   🔎 ${evalCount} tabla(s) de período encontradas en el DOM (table.beTableLibretaEval).`);
     let periodMap = extractPeriodsFromDom();
     let fuente = 'DOM (FreeStyleGrid)';
     // Reintento corto si SIGED todavía está renderizando las notas.
@@ -880,36 +882,46 @@
 
   // Devuelve un mapa { periodName -> { orales, escritas, oAct, rendText } }
   // leyendo la grilla de notas FreeStyleGrid del cuerpo de la página.
+  // Devuelve un mapa { periodName -> { orales, escritas, oAct, rendText } }.
+  // Usa selectores EXACTOS (table.beTableLibretaEval, no class*=…) para evitar
+  // que `[class*="beTableLibretaEval"]` matchee también las sub-tablas
+  // .beTableLibretaCabezalEval / .beTableLibretaDatosEval, y para no depender
+  // de table.FreeStyleGrid (que en algunas páginas no aparece como wrapper).
   function gradesFromFreeStyleGrid() {
     const map = new Map();
-    const grids = document.querySelectorAll('table.FreeStyleGrid, table[class*="FreeStyleGrid"]');
-    for (const grid of grids) {
-      const periodCells = grid.querySelectorAll('td[class*="beTableEvalFiltro"]');
-      for (const cell of periodCells) {
-        const evalTbl = cell.querySelector('table[class*="beTableLibretaEval"]');
-        if (!evalTbl) continue;
-        const nameSpan = evalTbl.querySelector('table[class*="beTableLibretaCabezalEval"] span');
-        const name = (nameSpan && nameSpan.textContent.trim()) || '';
-        if (!name) continue;
-        debugViz.mark(nameSpan, debugViz.colors.period, `período: ${name}`);
-        const dataTbl = evalTbl.querySelector('table[class*="beTableLibretaDatosEval"]');
-        if (!dataTbl) continue;
-        const trs = dataTbl.querySelectorAll(':scope > tbody > tr');
-        if (trs.length < 2) continue;
-        const dataRow = trs[trs.length - 1];
-        const tds = dataRow.querySelectorAll(':scope > td');
-        const orales = extractNotesFromCell(tds[0], 'Orales');
-        const escritas = extractNotesFromCell(tds[1], 'Escritas');
-        const oAct = extractNotesFromCell(tds[2], 'O.Act');
-        const rendCell = tds[3];
-        const rendSpan = rendCell ? rendCell.querySelector('span') : null;
-        const rendText = (rendSpan && rendSpan.textContent.trim()) || '';
-        if (rendCell && rendText) {
-          debugViz.mark(rendSpan || rendCell, debugViz.colors.rendCell, `R visible: ${rendText}`);
-        }
-        map.set(name.trim(), { orales, escritas, oAct, rendText });
+    const evalTables = document.querySelectorAll('table.beTableLibretaEval');
+    let withHeader = 0;
+    let withData = 0;
+    for (const evalTbl of evalTables) {
+      // Nombre del período: span dentro del cabezal directo.
+      const headerSpan = evalTbl.querySelector('tr.beTableLibretaCabezalEval span, table.beTableLibretaCabezalEval span');
+      if (!headerSpan) continue;
+      withHeader += 1;
+      const name = (headerSpan.textContent || '').trim();
+      if (!name) continue;
+      debugViz.mark(headerSpan, debugViz.colors.period, `período: ${name}`);
+      // Tabla interna de datos.
+      const dataTbl = evalTbl.querySelector('table.beTableLibretaDatosEval');
+      if (!dataTbl) continue;
+      withData += 1;
+      const trs = dataTbl.querySelectorAll(':scope > tbody > tr');
+      if (trs.length < 2) continue;
+      const dataRow = trs[trs.length - 1]; // última fila = datos (la primera es header Orales/Escritas/O.Act)
+      const tds = dataRow.querySelectorAll(':scope > td');
+      const orales = extractNotesFromCell(tds[0], 'Orales');
+      const escritas = extractNotesFromCell(tds[1], 'Escritas');
+      const oAct = extractNotesFromCell(tds[2], 'O.Act');
+      const rendCell = tds[3];
+      const rendSpan = rendCell ? rendCell.querySelector('span') : null;
+      const rendText = (rendSpan && rendSpan.textContent.trim()) || '';
+      if (rendCell && rendText) {
+        debugViz.mark(rendSpan || rendCell, debugViz.colors.rendCell, `R visible: ${rendText}`);
       }
+      map.set(name.trim(), { orales, escritas, oAct, rendText });
     }
+    try {
+      console.log(`[SIGED Juicios] FreeStyleGrid: ${evalTables.length} table.beTableLibretaEval encontradas (${withHeader} con header, ${withData} con datos, ${map.size} períodos con nombre).`);
+    } catch (_) {}
     return map;
   }
 
