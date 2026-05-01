@@ -335,6 +335,9 @@
     // Si viene del DOM con descripción de cada tarea, lo agregamos como
     // contexto extra para Claude (sin que vuelva a sumar duplicado).
     if (periodData.OActividadesDetalle) lines.push(`Detalle de tareas: ${periodData.OActividadesDetalle}`);
+    if (periodData.NotasInsuficientes > 0) {
+      lines.push(`Notas insuficientes (marcadas en SIGED): ${periodData.NotasInsuficientes}`);
+    }
     if (periodData.InasInjustificadas || periodData.InasJustificadas || periodData.InasFictas) {
       lines.push(`Inasistencias - injustif.: ${periodData.InasInjustificadas || 0}, justif.: ${periodData.InasJustificadas || 0}, fictas: ${periodData.InasFictas || 0}`);
     }
@@ -463,17 +466,15 @@
         periodMap = extractPeriodsFromDom();
       }
       // Log de lo que encontramos por período (diagnóstico).
-      const resumen = Array.from(periodMap.values())
-        .filter((p) => (p.Orales || p.Escritos || p.OActividades || '').trim() || p.EntregaHabilitada)
-        .map((p) => {
-          const o = (p.Orales || '').trim().split(/\s+/).filter(Boolean).length;
-          const e = (p.Escritos || '').trim().split(/\s+/).filter(Boolean).length;
-          const a = (p.OActividades || '').trim().split(/\s+/).filter(Boolean).length;
-          return `${p.ReuDsc || p.ReuCod}: O=${o} E=${e} A=${a}${p.RendVisible ? ` R=${p.RendVisible}` : ''}${p.EntregaHabilitada ? ' [habilitado]' : ''}`;
-        });
-      if (resumen.length) {
-        log('   📊 Notas detectadas por período:');
-        for (const r of resumen) log(`      ${r}`);
+      log('   📊 Notas detectadas por período:');
+      for (const p of periodMap.values()) {
+        const o = (p.Orales || '').trim().split(/\s+/).filter(Boolean).length;
+        const e = (p.Escritos || '').trim().split(/\s+/).filter(Boolean).length;
+        const a = (p.OActividades || '').trim().split(/\s+/).filter(Boolean).length;
+        const total = o + e + a;
+        const tag = p.EntregaHabilitada ? ' [HABILITADO]' : '';
+        const aviso = p.EntregaHabilitada && total === 0 ? ' ⚠ habilitado pero sin notas detectadas' : '';
+        log(`      ${p.ReuDsc || p.ReuCod}: O=${o} E=${e} A=${a}${p.RendVisible ? ` R=${p.RendVisible}` : ''}${p.NotasInsuficientes ? ` (${p.NotasInsuficientes} insuf.)` : ''}${tag}${aviso}`);
       }
       usandoFallback = true;
     }
@@ -853,9 +854,15 @@
         continue;
       }
       const tooltip = collectTooltipText(s);
-      const labelTip = tooltip ? ` ${tooltip.slice(0, 30)}…` : '';
+      // SIGED marca con la clase ColorTextoBaja las notas que cuentan como
+      // insuficientes/ausencias (típicamente 1). La detección la pasamos a
+      // Claude como contexto extra.
+      const cls = (typeof s.className === 'string') ? s.className : '';
+      const colorBaja = /ColorTextoBaja/i.test(cls);
+      const tip = tooltip + (colorBaja ? (tooltip ? ' — ' : '') + 'marcada como insuficiente' : '');
+      const labelTip = tip ? ` ${tip.slice(0, 30)}…` : '';
       debugViz.mark(s, debugViz.colors.note, `${columnLabel || 'nota'}: ${t}${labelTip}`);
-      out.push({ value: t, num, tooltip });
+      out.push({ value: t, num, tooltip: tip, columna: columnLabel || '', colorBaja });
     }
     return out;
   }
@@ -895,6 +902,26 @@
     return map;
   }
 
+  // Búsqueda tolerante: trim, case-insensitive, partial match. Importante
+  // porque a veces el nombre que muestra GridjuiciosContainerTbl tiene espacios
+  // de relleno que no aparecen en la grilla de notas.
+  function lookupGrades(grades, dsc) {
+    if (!dsc) return null;
+    if (grades.has(dsc)) return grades.get(dsc);
+    const t = (dsc || '').trim();
+    if (grades.has(t)) return grades.get(t);
+    const lower = t.toLowerCase();
+    for (const [k, v] of grades) {
+      if ((k || '').trim().toLowerCase() === lower) return v;
+    }
+    for (const [k, v] of grades) {
+      const kn = (k || '').trim().toLowerCase();
+      if (!kn || !lower) continue;
+      if (kn.includes(lower) || lower.includes(kn)) return v;
+    }
+    return null;
+  }
+
   // Fallback: combina la grilla de notas (FreeStyleGrid) con la grilla de
   // entrada (GridjuiciosContainerTbl) que tiene los <select> y <textarea>
   // editables. Las cruzamos por nombre de período.
@@ -918,10 +945,15 @@
         && getComputedStyle(juicioTa).display !== 'none';
       const habilitado = enabledCalif || enabledJuicio;
 
-      const g = grades.get(dsc) || { orales: [], escritas: [], oAct: [], rendText: '' };
+      const g = lookupGrades(grades, dsc) || { orales: [], escritas: [], oAct: [], rendText: '' };
       const all = [...g.orales, ...g.escritas, ...g.oAct];
       const detalle = all
-        .map((n) => n.tooltip ? `${n.value} (${n.tooltip})` : n.value)
+        .map((n) => {
+          const partes = [];
+          if (n.columna) partes.push(n.columna);
+          if (n.tooltip) partes.push(n.tooltip);
+          return partes.length ? `${n.value} (${partes.join(': ')})` : n.value;
+        })
         .join(' · ');
 
       map.set(reuCod.trim(), {
@@ -937,7 +969,9 @@
         EntregaHabilitada: habilitado,
         CalifxReuJuicio: juicioTa ? juicioTa.value : '',
         CalifxReuCalifCod: califSel ? califSel.value : (g.rendText || ''),
-        RendVisible: g.rendText, // Promedio que SIGED ya muestra (read-only)
+        RendVisible: g.rendText,
+        // Cantidad de notas con ColorTextoBaja (insuficientes) — útil para Claude.
+        NotasInsuficientes: all.filter((n) => n.colorBaja).length,
         InasInjustificadas: '',
         InasJustificadas: '',
         InasFictas: '',
