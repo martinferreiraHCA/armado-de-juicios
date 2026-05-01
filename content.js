@@ -11,8 +11,8 @@
     maxChars: 280,
     tone: 'Profesional, claro, conciso, en español rioplatense. Siempre en TERCERA PERSONA refiriéndose al/la estudiante (nunca "vos", "tú" ni "usted"). Evitar adjetivos exagerados y opiniones sobre la familia.',
     compararConAnterior: true,
-    rubrica1: 'Indica ausencia o falta de entrega del trabajo.',
-    rubrica24: 'Debe mejorar la calidad de sus producciones.',
+    rubrica1: 'No entregó el trabajo o no presentó evidencia (ausencia de producción). Mencionar como entrega pendiente cuando corresponda.',
+    rubrica24: 'Producciones insuficientes (notas menores a 5). Reconocer las dificultades pero adoptar tono CONSTRUCTIVO y POSITIVO: subrayar el margen de mejora y los aspectos puntuales a fortalecer; evitar etiquetas desmoralizantes.',
     rubrica56: 'Trabajo satisfactorio: cumple con lo solicitado.',
     rubrica78: 'Muy buen trabajo: se destaca en varios aspectos.',
     rubrica910: 'Trabajo destacado: producción de alta calidad.',
@@ -251,10 +251,10 @@
   function rubricaResumen(c, promedio) {
     if (!c.total) return 'No hay notas numéricas en el período.';
     const partes = [];
-    if (c.ausencias) partes.push(`${c.ausencias} ausencia(s) o no entrega(s) (notas iguales a 1)`);
-    if (c.aMejorar) partes.push(`${c.aMejorar} nota(s) entre 2 y 4 (debe mejorar la calidad de sus producciones)`);
-    if (c.buenas) partes.push(`${c.buenas} nota(s) entre 5 y 8 (trabajo suficiente o bueno a destacar)`);
-    if (c.destacadas) partes.push(`${c.destacadas} nota(s) de 9 o 10 (trabajo muy destacado)`);
+    if (c.ausencias) partes.push(`${c.ausencias} ausencia(s) / no entrega(s) — nota 1`);
+    if (c.aMejorar) partes.push(`${c.aMejorar} nota(s) entre 2 y 4 — insuficientes con margen de mejora (tono positivo)`);
+    if (c.buenas) partes.push(`${c.buenas} nota(s) entre 5 y 8 — satisfactorio o muy bueno`);
+    if (c.destacadas) partes.push(`${c.destacadas} nota(s) de 9 o 10 — destacadas`);
     partes.push(`Promedio: ${promedio == null ? 'N/D' : promedio.toFixed(2)}`);
     return partes.join('; ') + '.';
   }
@@ -268,12 +268,14 @@
       'No inventes datos: usá únicamente la información provista. No menciones nombres de tareas concretas si no se pasan.',
       'Sé breve y concreto: una o dos oraciones bastan.',
       'RÚBRICA OBLIGATORIA al interpretar las notas (definida por el/la docente):',
-      `  • Nota 1: ${cfg.rubrica1}`,
-      `  • Notas 2 a 4: ${cfg.rubrica24}`,
+      `  • Nota 1 (ausencia / no entrega): ${cfg.rubrica1}`,
+      `  • Notas 2 a 4 (insuficientes, < 5 estricto): ${cfg.rubrica24}`,
       `  • Notas 5 a 6: ${cfg.rubrica56}`,
       `  • Notas 7 a 8: ${cfg.rubrica78}`,
       `  • Notas 9 a 10: ${cfg.rubrica910}`,
-      'Si conviven notas en distintos rangos, equilibrá lo positivo con lo a mejorar (por ejemplo: "logra X, aunque debe mejorar Y").',
+      'Distinción importante: NO confundas "1" (ausencia) con "2-4" (insuficiencia con margen de mejora). El 1 indica que no hubo evidencia/producción; el 2-4 indica que sí hubo producción pero por debajo de lo esperado.',
+      'Cuando haya notas 2-4 redactá en tono CONSTRUCTIVO y POSITIVO: reconocer la dificultad, pero centrarse en el margen de mejora y aspectos a fortalecer. Evitá etiquetas desmoralizantes ("mal", "muy bajo", "preocupante").',
+      'Si conviven notas en distintos rangos, equilibrá lo positivo con lo a mejorar (por ejemplo: "logra X, aunque debe profundizar en Y").',
     ];
     if (cfg.compararConAnterior) {
       lines.push('Cuando se incluya el "Historial de períodos anteriores", usalo para describir el PROCESO del/la estudiante: progreso, mantenimiento o retroceso respecto al período inmediato anterior. Evitá repetir literalmente juicios anteriores.');
@@ -335,6 +337,9 @@
     // Si viene del DOM con descripción de cada tarea, lo agregamos como
     // contexto extra para Claude (sin que vuelva a sumar duplicado).
     if (periodData.OActividadesDetalle) lines.push(`Detalle de tareas: ${periodData.OActividadesDetalle}`);
+    if (periodData.NotasInsuficientes > 0) {
+      lines.push(`Notas insuficientes (marcadas en SIGED): ${periodData.NotasInsuficientes}`);
+    }
     if (periodData.InasInjustificadas || periodData.InasJustificadas || periodData.InasFictas) {
       lines.push(`Inasistencias - injustif.: ${periodData.InasInjustificadas || 0}, justif.: ${periodData.InasJustificadas || 0}, fictas: ${periodData.InasFictas || 0}`);
     }
@@ -463,17 +468,15 @@
         periodMap = extractPeriodsFromDom();
       }
       // Log de lo que encontramos por período (diagnóstico).
-      const resumen = Array.from(periodMap.values())
-        .filter((p) => (p.Orales || p.Escritos || p.OActividades || '').trim() || p.EntregaHabilitada)
-        .map((p) => {
-          const o = (p.Orales || '').trim().split(/\s+/).filter(Boolean).length;
-          const e = (p.Escritos || '').trim().split(/\s+/).filter(Boolean).length;
-          const a = (p.OActividades || '').trim().split(/\s+/).filter(Boolean).length;
-          return `${p.ReuDsc || p.ReuCod}: O=${o} E=${e} A=${a}${p.RendVisible ? ` R=${p.RendVisible}` : ''}${p.EntregaHabilitada ? ' [habilitado]' : ''}`;
-        });
-      if (resumen.length) {
-        log('   📊 Notas detectadas por período:');
-        for (const r of resumen) log(`      ${r}`);
+      log('   📊 Notas detectadas por período:');
+      for (const p of periodMap.values()) {
+        const o = (p.Orales || '').trim().split(/\s+/).filter(Boolean).length;
+        const e = (p.Escritos || '').trim().split(/\s+/).filter(Boolean).length;
+        const a = (p.OActividades || '').trim().split(/\s+/).filter(Boolean).length;
+        const total = o + e + a;
+        const tag = p.EntregaHabilitada ? ' [HABILITADO]' : '';
+        const aviso = p.EntregaHabilitada && total === 0 ? ' ⚠ habilitado pero sin notas detectadas' : '';
+        log(`      ${p.ReuDsc || p.ReuCod}: O=${o} E=${e} A=${a}${p.RendVisible ? ` R=${p.RendVisible}` : ''}${p.NotasInsuficientes ? ` (${p.NotasInsuficientes} insuf.)` : ''}${tag}${aviso}`);
       }
       usandoFallback = true;
     }
@@ -853,9 +856,15 @@
         continue;
       }
       const tooltip = collectTooltipText(s);
-      const labelTip = tooltip ? ` ${tooltip.slice(0, 30)}…` : '';
+      // SIGED marca con la clase ColorTextoBaja las notas que cuentan como
+      // insuficientes/ausencias (típicamente 1). La detección la pasamos a
+      // Claude como contexto extra.
+      const cls = (typeof s.className === 'string') ? s.className : '';
+      const colorBaja = /ColorTextoBaja/i.test(cls);
+      const tip = tooltip + (colorBaja ? (tooltip ? ' — ' : '') + 'marcada como insuficiente' : '');
+      const labelTip = tip ? ` ${tip.slice(0, 30)}…` : '';
       debugViz.mark(s, debugViz.colors.note, `${columnLabel || 'nota'}: ${t}${labelTip}`);
-      out.push({ value: t, num, tooltip });
+      out.push({ value: t, num, tooltip: tip, columna: columnLabel || '', colorBaja });
     }
     return out;
   }
@@ -895,6 +904,26 @@
     return map;
   }
 
+  // Búsqueda tolerante: trim, case-insensitive, partial match. Importante
+  // porque a veces el nombre que muestra GridjuiciosContainerTbl tiene espacios
+  // de relleno que no aparecen en la grilla de notas.
+  function lookupGrades(grades, dsc) {
+    if (!dsc) return null;
+    if (grades.has(dsc)) return grades.get(dsc);
+    const t = (dsc || '').trim();
+    if (grades.has(t)) return grades.get(t);
+    const lower = t.toLowerCase();
+    for (const [k, v] of grades) {
+      if ((k || '').trim().toLowerCase() === lower) return v;
+    }
+    for (const [k, v] of grades) {
+      const kn = (k || '').trim().toLowerCase();
+      if (!kn || !lower) continue;
+      if (kn.includes(lower) || lower.includes(kn)) return v;
+    }
+    return null;
+  }
+
   // Fallback: combina la grilla de notas (FreeStyleGrid) con la grilla de
   // entrada (GridjuiciosContainerTbl) que tiene los <select> y <textarea>
   // editables. Las cruzamos por nombre de período.
@@ -918,10 +947,15 @@
         && getComputedStyle(juicioTa).display !== 'none';
       const habilitado = enabledCalif || enabledJuicio;
 
-      const g = grades.get(dsc) || { orales: [], escritas: [], oAct: [], rendText: '' };
+      const g = lookupGrades(grades, dsc) || { orales: [], escritas: [], oAct: [], rendText: '' };
       const all = [...g.orales, ...g.escritas, ...g.oAct];
       const detalle = all
-        .map((n) => n.tooltip ? `${n.value} (${n.tooltip})` : n.value)
+        .map((n) => {
+          const partes = [];
+          if (n.columna) partes.push(n.columna);
+          if (n.tooltip) partes.push(n.tooltip);
+          return partes.length ? `${n.value} (${partes.join(': ')})` : n.value;
+        })
         .join(' · ');
 
       map.set(reuCod.trim(), {
@@ -937,7 +971,9 @@
         EntregaHabilitada: habilitado,
         CalifxReuJuicio: juicioTa ? juicioTa.value : '',
         CalifxReuCalifCod: califSel ? califSel.value : (g.rendText || ''),
-        RendVisible: g.rendText, // Promedio que SIGED ya muestra (read-only)
+        RendVisible: g.rendText,
+        // Cantidad de notas con ColorTextoBaja (insuficientes) — útil para Claude.
+        NotasInsuficientes: all.filter((n) => n.colorBaja).length,
         InasInjustificadas: '',
         InasJustificadas: '',
         InasFictas: '',
