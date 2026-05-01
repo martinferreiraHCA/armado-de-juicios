@@ -368,6 +368,14 @@
     const numeros = todasLasNotasNumericas(periodData);
     const promedio = calcularPromedio(numeros);
 
+    // Marcar inputs editables (debug visual)
+    if (row.califSelect && periodData.AsigPideRendimiento) {
+      debugViz.mark(row.califSelect, debugViz.colors.califInput, `Rend select (${row.dsc})`);
+    }
+    if (row.juicio && periodData.AsigPideJuicio) {
+      debugViz.mark(row.juicio, debugViz.colors.juicioInput, `Juicio textarea (${row.dsc})`);
+    }
+
     let rendCompletado = null;
     if (periodData.AsigPideRendimiento && promedio != null && row.califSelect) {
       const opt = elegirOpcionMasCercana(row.califSelect, promedio);
@@ -375,6 +383,7 @@
         setNativeValue(row.califSelect, opt.value);
         fireGxChange(row.califSelect);
         rendCompletado = opt.textContent.trim();
+        debugViz.mark(row.califSelect, debugViz.colors.filled, `✓ Rend=${rendCompletado} (avg ${promedio.toFixed(2)})`);
       }
     }
 
@@ -401,6 +410,7 @@
       setNativeValue(row.juicio, recortado);
       fireGxChange(row.juicio);
       juicioCompletado = recortado;
+      debugViz.mark(row.juicio, debugViz.colors.filled, `✓ Juicio (${recortado.length}c)`);
     }
 
     const partes = [];
@@ -427,6 +437,8 @@
 
   // Procesa la grilla completa del alumno actual. Devuelve resumen.
   async function procesarAlumnoActual(log, abortSignal) {
+    // Borramos marcas anteriores para no confundir alumnos.
+    debugViz.clear();
     // Pequeña espera defensiva: en navegaciones GX a veces termina el
     // postback pero los grades aparecen 1-2s después por lazy-load.
     if (gxBusyAnywhere()) {
@@ -824,17 +836,26 @@
     return Array.from(new Set(parts)).join(' — ');
   }
 
-  function extractNotesFromCell(td) {
+  function extractNotesFromCell(td, columnLabel) {
     if (!td) return [];
     const out = [];
     const spans = td.querySelectorAll('span');
     for (const s of spans) {
       const t = (s.textContent || '').trim();
       if (!t) continue;
-      if (!/^\d{1,2}([.,]\d{1,2})?$/.test(t)) continue;
+      if (!/^\d{1,2}([.,]\d{1,2})?$/.test(t)) {
+        if (t && t.length < 40) debugViz.mark(s, debugViz.colors.noteSkip, `descartada: "${t}"`);
+        continue;
+      }
       const num = parseFloat(t.replace(',', '.'));
-      if (Number.isNaN(num) || num < 0 || num > 10) continue;
-      out.push({ value: t, num, tooltip: collectTooltipText(s) });
+      if (Number.isNaN(num) || num < 0 || num > 10) {
+        debugViz.mark(s, debugViz.colors.noteSkip, `fuera rango: ${t}`);
+        continue;
+      }
+      const tooltip = collectTooltipText(s);
+      const labelTip = tooltip ? ` ${tooltip.slice(0, 30)}…` : '';
+      debugViz.mark(s, debugViz.colors.note, `${columnLabel || 'nota'}: ${t}${labelTip}`);
+      out.push({ value: t, num, tooltip });
     }
     return out;
   }
@@ -852,22 +873,22 @@
         const nameSpan = evalTbl.querySelector('table[class*="beTableLibretaCabezalEval"] span');
         const name = (nameSpan && nameSpan.textContent.trim()) || '';
         if (!name) continue;
+        debugViz.mark(nameSpan, debugViz.colors.period, `período: ${name}`);
         const dataTbl = evalTbl.querySelector('table[class*="beTableLibretaDatosEval"]');
         if (!dataTbl) continue;
         const trs = dataTbl.querySelectorAll(':scope > tbody > tr');
         if (trs.length < 2) continue;
-        // El header puede ser la primera o segunda fila según rendering;
-        // preferimos la última fila como datos.
         const dataRow = trs[trs.length - 1];
         const tds = dataRow.querySelectorAll(':scope > td');
-        const orales = extractNotesFromCell(tds[0]);
-        const escritas = extractNotesFromCell(tds[1]);
-        const oAct = extractNotesFromCell(tds[2]);
+        const orales = extractNotesFromCell(tds[0], 'Orales');
+        const escritas = extractNotesFromCell(tds[1], 'Escritas');
+        const oAct = extractNotesFromCell(tds[2], 'O.Act');
         const rendCell = tds[3];
         const rendSpan = rendCell ? rendCell.querySelector('span') : null;
         const rendText = (rendSpan && rendSpan.textContent.trim()) || '';
-        // Algunos renderizados no usan 4 columnas (solo 3); en ese caso
-        // dejamos rendText vacío.
+        if (rendCell && rendText) {
+          debugViz.mark(rendSpan || rendCell, debugViz.colors.rendCell, `R visible: ${rendText}`);
+        }
         map.set(name.trim(), { orales, escritas, oAct, rendText });
       }
     }
@@ -1164,7 +1185,70 @@
   }
 
   // ---------------------------------------------------------------------------
-  // Modo scrapping: click + comentario para capturar zonas críticas del DOM.
+  // Debug visual: pinta los elementos que la extensión toca con colores y
+  // etiquetas, para ver qué scrapea y qué ignora.
+  // ---------------------------------------------------------------------------
+  const debugViz = {
+    active: false,
+    marks: [],
+    colors: {
+      period: '#3b82f6',     // azul - nombre del período
+      note: '#22c55e',       // verde - nota numérica usada
+      noteSkip: '#ef4444',   // rojo - candidato descartado
+      rendCell: '#eab308',   // amarillo - celda R (promedio visible)
+      califInput: '#f97316', // naranja - select de Rend (editable)
+      juicioInput: '#a855f7',// morado - textarea de Juicio (editable)
+      filled: '#10b981',     // verde fuerte - campo completado por nosotros
+      ignored: '#6b7280',    // gris - fila procesada pero período no habilitado
+    },
+    mark(el, color, label) {
+      if (!this.active || !el || !el.style) return;
+      const original = { outline: el.style.outline, offset: el.style.outlineOffset };
+      el.style.outline = `2px solid ${color}`;
+      el.style.outlineOffset = '1px';
+      let badge = null;
+      if (label) {
+        badge = document.createElement('div');
+        badge.className = 'siged-debug-badge';
+        badge.textContent = label;
+        badge.style.background = color;
+        const r = el.getBoundingClientRect();
+        badge.style.top = `${r.top + window.scrollY - 14}px`;
+        badge.style.left = `${r.left + window.scrollX}px`;
+        document.body.appendChild(badge);
+      }
+      this.marks.push({ el, badge, original });
+    },
+    clear() {
+      for (const m of this.marks) {
+        if (m.el && m.el.style) {
+          m.el.style.outline = m.original.outline || '';
+          m.el.style.outlineOffset = m.original.offset || '';
+        }
+        if (m.badge && m.badge.parentNode) m.badge.parentNode.removeChild(m.badge);
+      }
+      this.marks = [];
+    },
+    activate() {
+      this.active = true;
+      if (!document.getElementById('siged-debug-style')) {
+        const s = document.createElement('style');
+        s.id = 'siged-debug-style';
+        s.textContent = `
+          .siged-debug-badge{position:absolute;color:#fff;font:10px/1 system-ui,sans-serif;
+            padding:2px 4px;border-radius:3px;z-index:2147483646;pointer-events:none;
+            white-space:nowrap;box-shadow:0 1px 3px rgba(0,0,0,.3);max-width:240px;
+            overflow:hidden;text-overflow:ellipsis}
+        `;
+        document.head.appendChild(s);
+      }
+    },
+    deactivate() {
+      this.active = false;
+      this.clear();
+    },
+  };
+
   // ---------------------------------------------------------------------------
   const scrap = { active: false, hoverEl: null, captures: [] };
 
@@ -1329,6 +1413,11 @@
         <button class="primary alt" data-act="run-all">Procesar todo el grupo (auto)</button>
         <button class="danger" data-act="stop" hidden>⏹ Detener</button>
         <button class="secondary" data-act="diag">🔍 Diagnóstico ahora</button>
+        <label class="check-row">
+          <input type="checkbox" data-fld="debug-toggle">
+          🐞 Modo debug visual (pinta lo que toca)
+        </label>
+        <div class="legend" data-fld="debug-legend" hidden></div>
         <details class="scrap">
           <summary>🔧 Modo scrapping (avanzado)</summary>
           <div class="scrap-body">
@@ -1353,6 +1442,10 @@
       #siged-juicios-panel button.primary.alt:disabled{background:#4b5563}
       #siged-juicios-panel button.danger{background:#dc2626;color:#fff;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;font-weight:600}
       #siged-juicios-panel button.secondary{background:#4b5563;color:#f9fafb;border:0;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:12px}
+      #siged-juicios-panel label.check-row{display:flex;align-items:center;gap:6px;font-size:12px;color:#f9fafb;margin-top:2px;cursor:pointer}
+      #siged-juicios-panel label.check-row input{margin:0}
+      #siged-juicios-panel .legend{display:flex;flex-wrap:wrap;gap:4px;font-size:10px;background:#0f172a;padding:6px;border-radius:6px}
+      #siged-juicios-panel .legend .ch{display:inline-flex;align-items:center;gap:3px;padding:2px 5px;border-radius:3px;color:#fff}
       #siged-juicios-panel details.scrap{background:#111827;border-radius:6px;padding:6px 8px;margin-top:6px;font-size:11px}
       #siged-juicios-panel details.scrap summary{cursor:pointer;color:#93c5fd;font-weight:600}
       #siged-juicios-panel details.scrap .scrap-body{padding-top:6px;display:flex;flex-direction:column;gap:6px}
@@ -1368,6 +1461,35 @@
       el.textContent = `${new Date().toLocaleTimeString()}  ${msg}\n` + el.textContent;
     };
     panelLog = log;
+
+    // Debug toggle
+    const dbgToggle = panel.querySelector('[data-fld="debug-toggle"]');
+    const dbgLegend = panel.querySelector('[data-fld="debug-legend"]');
+    if (dbgToggle) {
+      dbgToggle.addEventListener('change', () => {
+        if (dbgToggle.checked) {
+          debugViz.activate();
+          log('🐞 Debug visual: ON. Las marcas aparecen al procesar.');
+          dbgLegend.hidden = false;
+          dbgLegend.innerHTML = `
+            <span class="ch" style="background:${debugViz.colors.period}">período</span>
+            <span class="ch" style="background:${debugViz.colors.note}">nota usada</span>
+            <span class="ch" style="background:${debugViz.colors.noteSkip}">descartada</span>
+            <span class="ch" style="background:${debugViz.colors.rendCell}">R visible</span>
+            <span class="ch" style="background:${debugViz.colors.califInput}">Rend input</span>
+            <span class="ch" style="background:${debugViz.colors.juicioInput}">Juicio input</span>
+            <span class="ch" style="background:${debugViz.colors.filled}">completado</span>
+            <button class="secondary" data-act="debug-clear" style="margin-top:4px">🧹 Limpiar marcas</button>
+          `;
+        } else {
+          debugViz.deactivate();
+          log('🐞 Debug visual: OFF.');
+          dbgLegend.hidden = true;
+          dbgLegend.innerHTML = '';
+        }
+      });
+    }
+
     refreshScrapStatus = () => {
       const s = panel.querySelector('[data-fld="scrap-status"]');
       if (s) s.textContent = `${scrap.captures.length} captura(s)`;
@@ -1415,6 +1537,7 @@
         refreshScrapStatus();
         return;
       }
+      if (act === 'debug-clear') { debugViz.clear(); log('🐞 Marcas borradas.'); return; }
       if (act === 'scrap-export') { await scrapingExport(); return; }
       if (act === 'scrap-clear') { scrapingClear(); return; }
       if (act === 'run' || act === 'run-all') {
