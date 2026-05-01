@@ -435,19 +435,24 @@
   }
 
   // GeneXus marca data-gx-evt-inprogress="true" mientras procesa un evento.
-  // Esperamos a que vuelva a "false" (o desaparezca) antes de tirar otro click.
-  function gxBusy(el) {
-    if (!el) return false;
+  // Re-buscamos por ID en cada check porque tras el postback GX puede reemplazar
+  // el <input> entero: la referencia previa queda "detached" y conserva
+  // inprogress=true para siempre, lo que hacía que el wait nunca termine.
+  function gxBusy(idOrEl) {
+    const id = typeof idOrEl === 'string' ? idOrEl : (idOrEl && idOrEl.id) || 'BTNGUARDARYSIGUIENTE';
+    const el = document.getElementById(id);
+    if (!el) return false; // Botón ya no está en el DOM = el evento terminó.
+    if (!document.body.contains(el)) return false;
     return el.getAttribute('data-gx-evt-inprogress') === 'true';
   }
 
-  async function waitForGxIdle(el, timeoutMs, abortSignal) {
+  async function waitForGxIdle(idOrEl, timeoutMs, abortSignal) {
     const t0 = Date.now();
     while (Date.now() - t0 < timeoutMs) {
       if (abortSignal && abortSignal.aborted) return { aborted: true };
       // También cerramos popups que pudieran estar abiertos del estado anterior.
       autoConfirmPopup();
-      if (!gxBusy(el)) return { idle: true };
+      if (!gxBusy(idOrEl)) return { idle: true };
       await sleep(300);
     }
     return { timeout: true };
@@ -456,7 +461,8 @@
   // Espera a que GX procese un evento del botón: primero ve el flag in-progress
   // arriba, después abajo. Si el flag nunca subió suponemos que el click no
   // disparó nada.
-  async function waitForGxEventComplete(el, timeoutMs, abortSignal, log) {
+  async function waitForGxEventComplete(idOrEl, timeoutMs, abortSignal, log) {
+    const id = typeof idOrEl === 'string' ? idOrEl : (idOrEl && idOrEl.id) || 'BTNGUARDARYSIGUIENTE';
     const t0 = Date.now();
     let sawBusy = false;
     let lastLog = 0;
@@ -477,7 +483,7 @@
         if (log) log(`   ⚠ Popup activo sin botón afirmativo: "${auto.text.slice(0, 120)}"`);
         return { popup: auto.text };
       }
-      const busy = gxBusy(el);
+      const busy = gxBusy(id);
       if (busy) sawBusy = true;
       if (sawBusy && !busy) return { complete: true, confirmados };
       const elapsedMs = Date.now() - t0;
@@ -756,10 +762,13 @@
 
       // Antes de clickear, esperamos a que ningún postback de los onchange
       // (Rend, Juicio) siga en vuelo. data-gx-evt-inprogress=true en cualquier
-      // botón GX significa "GeneXus ocupado".
-      const btnSave = findGuardarYSiguiente();
-      if (!btnSave) { log('No encontré el botón "Guardar y siguiente". Detengo.'); return; }
-      const idle1 = await waitForGxIdle(btnSave, 20000, abortSignal);
+      // botón GX significa "GeneXus ocupado". Pasamos el ID (no el elemento)
+      // porque GX puede reemplazar el <input> en el DOM tras cada postback y
+      // queremos siempre re-leer el botón fresco.
+      const btnSaveInicial = findGuardarYSiguiente();
+      if (!btnSaveInicial) { log('No encontré el botón "Guardar y siguiente". Detengo.'); return; }
+      const btnSaveId = btnSaveInicial.id || 'BTNGUARDARYSIGUIENTE';
+      const idle1 = await waitForGxIdle(btnSaveId, 20000, abortSignal);
       if (idle1.aborted) { log('⏹ Detenido por el usuario.'); return; }
       if (!idle1.idle) {
         log('GeneXus sigue procesando los cambios después de 20s. Reintento igual…');
@@ -771,17 +780,20 @@
       log('💾 Guardando y avanzando al siguiente alumno…');
 
       // Esperamos a que GX procese el evento (flag busy on -> off).
-      const ev = await waitForGxEventComplete(btnSave, 90000, abortSignal, log);
+      const ev = await waitForGxEventComplete(btnSaveId, 90000, abortSignal, log);
       if (ev.aborted) { log('⏹ Detenido por el usuario.'); return; }
       if (ev.popup) { log(`SIGED mostró un popup que no pude confirmar: "${ev.popup.slice(0, 200)}". Detengo para que lo revises a mano.`); return; }
       if (ev.timeout) {
         if (!ev.sawBusy) {
           log('El click no levantó el flag GX-busy: vuelvo a clickear con foco+Enter…');
-          try { btnSave.focus(); } catch (_) {}
-          btnSave.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
-          btnSave.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
-          btnSave.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
-          const ev2 = await waitForGxEventComplete(btnSave, 60000, abortSignal, log);
+          const btnAhora = document.getElementById(btnSaveId);
+          if (btnAhora) {
+            try { btnAhora.focus(); } catch (_) {}
+            btnAhora.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+            btnAhora.dispatchEvent(new KeyboardEvent('keypress', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+            btnAhora.dispatchEvent(new KeyboardEvent('keyup', { key: 'Enter', code: 'Enter', bubbles: true, cancelable: true }));
+          }
+          const ev2 = await waitForGxEventComplete(btnSaveId, 60000, abortSignal, log);
           if (ev2.aborted) { log('⏹ Detenido por el usuario.'); return; }
           if (ev2.popup) { log(`Popup sin botón afirmativo: "${ev2.popup.slice(0, 200)}". Detengo.`); return; }
           if (!ev2.complete) { log('Sigue sin completarse. Detengo.'); return; }
@@ -809,6 +821,10 @@
         log('No detecté postback tras 45s. Detengo (¿último alumno o error?).');
         return;
       }
+      // Settle wait: damos un respiro extra para que SIGED termine de pintar
+      // todos los onchange iniciales (recálculo de promedios, habilitación
+      // de campos, etc.) antes de procesar al nuevo alumno.
+      await sleep(1500);
       const nuevo = detectAlumno();
       log(`→ Nuevo alumno: ${nuevo || '(sin nombre detectado)'}`);
     }
