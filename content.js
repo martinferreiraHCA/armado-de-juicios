@@ -263,6 +263,7 @@
     const lines = [
       'Sos un asistente que ayuda a docentes uruguayos a redactar juicios de evaluación para boletines escolares (SIGED).',
       'REGLA OBLIGATORIA: el juicio se redacta SIEMPRE en tercera persona, refiriéndose al/la estudiante (por ejemplo: "demuestra", "presenta dificultades", "logra"). Nunca uses segunda persona ("vos", "tú", "usted") ni primera persona.',
+      'NUNCA menciones el NOMBRE del/la estudiante dentro del juicio. El nombre se te pasa solo como contexto interno; el texto generado debe ser válido sin él (usá "el/la estudiante" o reformulá la oración).',
       'No uses emojis ni signos de exclamación múltiples. No emitas juicios sobre la familia. Respetá la privacidad.',
       'No inventes datos: usá únicamente la información provista. No menciones nombres de tareas concretas si no se pasan.',
       'Sé breve y concreto: una o dos oraciones bastan.',
@@ -816,6 +817,9 @@
       // No filtramos por clase porque GX usa nombres con espacios variables;
       // tampoco por visibilidad estricta porque las sub-tablas plegables a
       // veces tienen los grades dentro pero con la fila aún pintando.
+      // Para CADA nota capturamos todos los atributos "tooltip" (title,
+      // data-content, aria-label, data-original-title) y también el TD
+      // siguiente, que a veces lleva un comentario adicional del docente.
       const numericNotes = [];
       const notasConTitle = [];
       const allSpans = tr.querySelectorAll('span');
@@ -826,8 +830,23 @@
         const num = parseFloat(t.replace(',', '.'));
         if (Number.isNaN(num) || num < 0 || num > 10) continue;
         numericNotes.push(t);
-        const title = (span.getAttribute('title') || '').trim();
-        notasConTitle.push(title ? `${t} (${title})` : t);
+        const tooltipParts = [
+          span.getAttribute('title'),
+          span.getAttribute('data-content'),
+          span.getAttribute('aria-label'),
+          span.getAttribute('data-original-title'),
+          span.getAttribute('data-tip'),
+        ].map((s) => (s || '').trim()).filter(Boolean);
+        // Algunos comentarios del docente viven en un span hermano oculto.
+        const sibling = span.parentElement
+          ? span.parentElement.querySelector('span.beReadonlyAttributeBlockComment, span[class*=Comment], div[class*=tooltip]')
+          : null;
+        if (sibling) {
+          const sibText = (sibling.textContent || '').trim();
+          if (sibText) tooltipParts.push(sibText);
+        }
+        const tooltipText = Array.from(new Set(tooltipParts)).join(' — ');
+        notasConTitle.push(tooltipText ? `${t} (${tooltipText})` : t);
       }
 
       map.set(reuCod.trim(), {
@@ -1090,6 +1109,140 @@
   }
 
   // ---------------------------------------------------------------------------
+  // Modo scrapping: click + comentario para capturar zonas críticas del DOM.
+  // ---------------------------------------------------------------------------
+  const scrap = { active: false, hoverEl: null, captures: [] };
+
+  function cssPath(el) {
+    const path = [];
+    let cur = el;
+    while (cur && cur.nodeType === 1 && cur !== document.body && path.length < 8) {
+      let sel = cur.tagName.toLowerCase();
+      if (cur.id) { path.unshift(`#${cur.id}`); break; }
+      const cls = (typeof cur.className === 'string')
+        ? cur.className.trim().split(/\s+/).filter(Boolean).slice(0, 2).join('.')
+        : '';
+      if (cls) sel += `.${cls}`;
+      const parent = cur.parentNode;
+      if (parent) {
+        const sibs = Array.from(parent.children).filter((c) => c.tagName === cur.tagName);
+        if (sibs.length > 1) sel += `:nth-of-type(${sibs.indexOf(cur) + 1})`;
+      }
+      path.unshift(sel);
+      cur = cur.parentNode;
+    }
+    return path.join(' > ');
+  }
+
+  function scrapHighlight(el) {
+    el._sigedSavedOutline = el.style.outline;
+    el._sigedSavedOffset = el.style.outlineOffset;
+    el.style.outline = '2px solid #22c55e';
+    el.style.outlineOffset = '2px';
+  }
+  function scrapUnhighlight(el) {
+    el.style.outline = el._sigedSavedOutline || '';
+    el.style.outlineOffset = el._sigedSavedOffset || '';
+    delete el._sigedSavedOutline;
+    delete el._sigedSavedOffset;
+  }
+
+  function scrapHoverHandler(e) {
+    if (!scrap.active) return;
+    const t = e.target;
+    if (!t || t === scrap.hoverEl) return;
+    if (t.closest && t.closest('#siged-juicios-panel')) return;
+    if (scrap.hoverEl) scrapUnhighlight(scrap.hoverEl);
+    scrapHighlight(t);
+    scrap.hoverEl = t;
+  }
+
+  function scrapClickHandler(e) {
+    if (!scrap.active) return;
+    const el = e.target;
+    if (!el || (el.closest && el.closest('#siged-juicios-panel'))) return;
+    e.preventDefault();
+    e.stopPropagation();
+    const sugerido = el.id ? `#${el.id}` : el.tagName.toLowerCase();
+    const comment = window.prompt(`Comentario sobre "${sugerido}" (qué hace este elemento, qué dato extraer):`, '');
+    if (comment === null) return; // cancel
+    const cap = {
+      n: scrap.captures.length + 1,
+      comment: comment.trim(),
+      tagName: el.tagName,
+      id: el.id || null,
+      name: el.getAttribute('name') || null,
+      classes: (typeof el.className === 'string') ? el.className.trim() : null,
+      selector: cssPath(el),
+      text: (el.textContent || '').trim().slice(0, 500),
+      value: (el.value !== undefined && el.value !== null) ? String(el.value).slice(0, 500) : null,
+      attrs: {},
+      tooltipAttrs: {},
+      visible: isVisible(el),
+      rect: (() => { const r = el.getBoundingClientRect(); return { x: Math.round(r.x), y: Math.round(r.y), w: Math.round(r.width), h: Math.round(r.height) }; })(),
+      html: (el.outerHTML || '').slice(0, 3000),
+      timestamp: new Date().toISOString(),
+    };
+    // Atributos completos.
+    for (const a of el.attributes || []) {
+      cap.attrs[a.name] = (a.value || '').slice(0, 500);
+      if (/^(title|aria-label|data-content|data-original-title|data-tip|data-tooltip|alt)$/i.test(a.name)) {
+        cap.tooltipAttrs[a.name] = a.value;
+      }
+    }
+    scrap.captures.push(cap);
+    panelLog(`📌 capturé #${cap.n} "${cap.id || cap.tagName.toLowerCase()}"${cap.comment ? ` — ${cap.comment.slice(0, 60)}` : ''}`);
+    refreshScrapStatus();
+    // Flash visual.
+    scrapUnhighlight(el);
+    setTimeout(() => { scrapHighlight(el); setTimeout(() => scrapUnhighlight(el), 250); }, 80);
+  }
+
+  function scrapingActivate() {
+    scrap.active = true;
+    document.addEventListener('mousemove', scrapHoverHandler, true);
+    document.addEventListener('click', scrapClickHandler, true);
+    document.body.style.cursor = 'crosshair';
+    panelLog('🔧 Modo scrapping activado. Hacé click en cualquier elemento para capturarlo.');
+  }
+  function scrapingDeactivate() {
+    scrap.active = false;
+    document.removeEventListener('mousemove', scrapHoverHandler, true);
+    document.removeEventListener('click', scrapClickHandler, true);
+    if (scrap.hoverEl) scrapUnhighlight(scrap.hoverEl);
+    scrap.hoverEl = null;
+    document.body.style.cursor = '';
+    panelLog('🔧 Modo scrapping desactivado.');
+  }
+
+  async function scrapingExport() {
+    if (!scrap.captures.length) {
+      panelLog('No hay capturas. Activá el inspector y clickeá elementos.');
+      return;
+    }
+    const payload = {
+      url: location.href,
+      capturedAt: new Date().toISOString(),
+      captures: scrap.captures,
+    };
+    const text = JSON.stringify(payload, null, 2);
+    let copiado = false;
+    try { await navigator.clipboard.writeText(text); copiado = true; } catch (_) {}
+    panelLog(`📋 ${scrap.captures.length} captura(s) ${copiado ? 'copiadas al portapapeles' : 'listas en F12 Console'}.`);
+    console.log('[SIGED Juicios] capturas:', payload);
+  }
+
+  function scrapingClear() {
+    scrap.captures = [];
+    panelLog('🗑 Capturas limpiadas.');
+    refreshScrapStatus();
+  }
+
+  // log y refreshScrapStatus se enlazan al panel construido más abajo.
+  let panelLog = (m) => console.log('[SIGED Juicios]', m);
+  let refreshScrapStatus = () => {};
+
+  // ---------------------------------------------------------------------------
   // Panel flotante
   // ---------------------------------------------------------------------------
   function buildPanel() {
@@ -1121,6 +1274,18 @@
         <button class="primary alt" data-act="run-all">Procesar todo el grupo (auto)</button>
         <button class="danger" data-act="stop" hidden>⏹ Detener</button>
         <button class="secondary" data-act="diag">🔍 Diagnóstico ahora</button>
+        <details class="scrap">
+          <summary>🔧 Modo scrapping (avanzado)</summary>
+          <div class="scrap-body">
+            <div class="status" data-fld="scrap-status">0 capturas</div>
+            <div class="row2">
+              <button class="secondary" data-act="scrap-toggle">Activar inspector</button>
+              <button class="secondary" data-act="scrap-export">📋 Exportar</button>
+              <button class="secondary" data-act="scrap-clear">🗑 Limpiar</button>
+            </div>
+            <p class="hint">Hacé click en cualquier elemento de la página y agregale un comentario. Después usá <em>Exportar</em> para copiar todo al portapapeles y pegarlo en el chat.</p>
+          </div>
+        </details>
         <div class="log" data-fld="log">Listo.</div>
       </div>
     `;
@@ -1133,6 +1298,13 @@
       #siged-juicios-panel button.primary.alt:disabled{background:#4b5563}
       #siged-juicios-panel button.danger{background:#dc2626;color:#fff;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;font-weight:600}
       #siged-juicios-panel button.secondary{background:#4b5563;color:#f9fafb;border:0;padding:6px 10px;border-radius:6px;cursor:pointer;font-size:12px}
+      #siged-juicios-panel details.scrap{background:#111827;border-radius:6px;padding:6px 8px;margin-top:6px;font-size:11px}
+      #siged-juicios-panel details.scrap summary{cursor:pointer;color:#93c5fd;font-weight:600}
+      #siged-juicios-panel details.scrap .scrap-body{padding-top:6px;display:flex;flex-direction:column;gap:6px}
+      #siged-juicios-panel details.scrap .row2{display:flex;gap:4px;flex-wrap:wrap}
+      #siged-juicios-panel details.scrap .row2 button{flex:1;min-width:60px}
+      #siged-juicios-panel details.scrap p.hint{margin:4px 0 0;color:#9ca3af;font-size:10px;line-height:1.3}
+      #siged-juicios-panel details.scrap.active summary::after{content:" · ACTIVO";color:#22c55e}
     `;
     panel.appendChild(extra);
 
@@ -1140,6 +1312,16 @@
       const el = panel.querySelector('[data-fld="log"]');
       el.textContent = `${new Date().toLocaleTimeString()}  ${msg}\n` + el.textContent;
     };
+    panelLog = log;
+    refreshScrapStatus = () => {
+      const s = panel.querySelector('[data-fld="scrap-status"]');
+      if (s) s.textContent = `${scrap.captures.length} captura(s)`;
+      const det = panel.querySelector('details.scrap');
+      if (det) det.classList.toggle('active', scrap.active);
+      const btn = panel.querySelector('[data-act="scrap-toggle"]');
+      if (btn) btn.textContent = scrap.active ? 'Desactivar inspector' : 'Activar inspector';
+    };
+    refreshScrapStatus();
 
     const refreshStatus = () => {
       const s = panel.querySelector('[data-fld="cfg-status"]');
@@ -1173,6 +1355,13 @@
         log('   (HTML completo y GXState raw en F12 → Console)');
         return;
       }
+      if (act === 'scrap-toggle') {
+        if (scrap.active) scrapingDeactivate(); else scrapingActivate();
+        refreshScrapStatus();
+        return;
+      }
+      if (act === 'scrap-export') { await scrapingExport(); return; }
+      if (act === 'scrap-clear') { scrapingClear(); return; }
       if (act === 'run' || act === 'run-all') {
         await loadConfig();
         refreshStatus();
