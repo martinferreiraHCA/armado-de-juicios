@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "SIGED · Juicios con IA (Claude)",
   "description": "Genera juicios y promedios automáticos en la pantalla \"Cierre de promedios por alumno\" de SIGED usando la API de Claude.",
-  "version": "1.9.0",
+  "version": "1.10.0",
   "permissions": ["storage"],
   "host_permissions": [
     "*://*.siged.com.uy/*",
