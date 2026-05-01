@@ -377,14 +377,61 @@
   // ---------------------------------------------------------------------------
   // Auto-loop: procesar todos los alumnos del grupo
   // ---------------------------------------------------------------------------
-  function clickGuardarYSiguiente() {
-    // En SIGED, "Guardar y siguiente" suele ser un <input type=button> o <button>
-    // con id BTNGUARDARYSIGUIENTE (también existe BTNGUARDARYANTERIOR).
-    const btn = document.getElementById('BTNGUARDARYSIGUIENTE');
-    if (!btn) return false;
-    if (btn.disabled) return false;
-    btn.click();
+  function clickLikeUser(el) {
+    if (!el) return false;
+    if (el.disabled) return false;
+    try { el.focus(); } catch (_) { /* ignore */ }
+    // 1) Llamar al onclick inline de GeneXus directamente (es lo más fiable
+    //    porque el handler suele estar en el atributo, no en addEventListener).
+    let viaOnclick = false;
+    try {
+      if (typeof el.onclick === 'function') {
+        el.onclick(new MouseEvent('click', { bubbles: true, cancelable: true }));
+        viaOnclick = true;
+      }
+    } catch (e) { console.warn('[SIGED Juicios] onclick lanzó error', e); }
+    // 2) Disparar la secuencia completa de eventos de ratón para handlers
+    //    registrados con addEventListener.
+    const opts = { bubbles: true, cancelable: true, view: window, button: 0 };
+    el.dispatchEvent(new MouseEvent('mousedown', opts));
+    el.dispatchEvent(new MouseEvent('mouseup', opts));
+    el.dispatchEvent(new MouseEvent('click', opts));
     return true;
+  }
+
+  // Devuelve el primer elemento que matchee algún ID conocido o, si no,
+  // el primer botón/input/anchor cuyo texto visible diga "Guardar y siguiente"
+  // (también aceptamos "continuar"/"próximo" por si la UI lo cambia).
+  function findGuardarYSiguiente() {
+    const ids = [
+      'BTNGUARDARYSIGUIENTE',
+      'BTNGUARDARYSIGUIENTE_MPAGE',
+      'BTNGUARDAR_Y_SIGUIENTE',
+      'BTNGUARDARYCONTINUAR',
+    ];
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (el && !el.disabled && el.offsetParent !== null) return el;
+    }
+    const candidates = $$('button, input[type="button"], input[type="submit"], a, span, div');
+    for (const el of candidates) {
+      if (el.disabled) continue;
+      if (el.offsetParent === null) continue;
+      const t = (el.value || el.textContent || '').trim().toLowerCase();
+      if (!t || t.length > 60) continue;
+      if (/guardar.*(siguiente|continuar|pr[oó]ximo)/i.test(t)) return el;
+    }
+    return null;
+  }
+
+  function clickGuardarYSiguiente() {
+    const el = findGuardarYSiguiente();
+    if (!el) {
+      console.warn('[SIGED Juicios] no encontré botón Guardar y siguiente.');
+      return false;
+    }
+    console.log('[SIGED Juicios] click en', el.id || el.tagName, el);
+    return clickLikeUser(el);
   }
 
   function sleep(ms) {
@@ -410,18 +457,29 @@
     return { ready: false, timeout: true };
   }
 
+  function popupVisible() {
+    // SIGED muestra mensajes en varios contenedores: SECTIONPOPUP / SECTIONPOPUPDIAG / DIAG
+    // o cualquier div con clase de modal. Agarramos el primero visible.
+    const ids = ['SECTIONPOPUP', 'SECTIONPOPUPDIAG', 'DIAG', 'TBMSJPOPUP', 'TBMSJPOPUPDIAG'];
+    for (const id of ids) {
+      const el = document.getElementById(id);
+      if (el && el.offsetParent !== null) {
+        const txt = (el.textContent || '').trim();
+        if (txt) return { id, text: txt.slice(0, 200) };
+      }
+    }
+    return null;
+  }
+
   // Espera a que el GXState (input hidden de GeneXus) cambie, indicando que
   // SIGED hizo el postback y cargó al siguiente alumno; después espera a que
   // la grilla quede lista de nuevo.
-  async function waitForNextStudent(prevStateRaw, timeoutMs, abortSignal) {
+  async function waitForNextStudent(prevStateRaw, timeoutMs, abortSignal, onTick) {
     const t0 = Date.now();
     while (Date.now() - t0 < timeoutMs) {
       if (abortSignal && abortSignal.aborted) return { changed: false, aborted: true };
-      // Popup de SIGED (advertencias, confirmaciones, fin de listado).
-      const popup = document.getElementById('SECTIONPOPUP');
-      if (popup && popup.offsetParent !== null && popup.textContent.trim()) {
-        return { changed: false, popup: popup.textContent.trim().slice(0, 200) };
-      }
+      const pop = popupVisible();
+      if (pop) return { changed: false, popup: `${pop.id}: ${pop.text}` };
       const cur = readGxStateRaw();
       if (cur && cur !== prevStateRaw) {
         // GXState cambió: esperar a que la grilla del nuevo alumno esté lista.
@@ -429,6 +487,9 @@
         if (ready.aborted) return { changed: false, aborted: true };
         if (!ready.ready) return { changed: false, gridStuck: true };
         return { changed: true };
+      }
+      if (typeof onTick === 'function') {
+        try { await onTick(Date.now() - t0); } catch (_) { /* ignore */ }
       }
       await sleep(400);
     }
@@ -458,17 +519,29 @@
       }
       if (res.alumno) procesados.add(res.alumno);
 
-      await sleep(400);
+      // Dar tiempo a GeneXus a que termine eventuales postbacks internos
+      // disparados por los onchange (Promedio recalculado, etc.).
+      await sleep(1500);
       if (abortSignal.aborted) { log('⏹ Detenido por el usuario antes de guardar.'); return; }
 
+      const stateBeforeClick = readGxStateRaw();
       const clicked = clickGuardarYSiguiente();
       if (!clicked) {
-        log('No encontré el botón "Guardar y siguiente" (BTNGUARDARYSIGUIENTE). Detengo.');
+        log('No encontré el botón "Guardar y siguiente". Detengo.');
         return;
       }
       log('💾 Guardando y avanzando al siguiente alumno…');
 
-      const wait = await waitForNextStudent(stateBefore, 45000, abortSignal);
+      // Reintento del click: si a los 5s no hubo cambio en GXState ni popup,
+      // probamos clickear de nuevo (a veces el primer evento se pierde).
+      let clickedAgain = false;
+      const wait = await waitForNextStudent(stateBefore, 45000, abortSignal, async (elapsedMs) => {
+        if (!clickedAgain && elapsedMs > 5000 && readGxStateRaw() === stateBeforeClick) {
+          clickedAgain = true;
+          log('Reintentando click en "Guardar y siguiente"…');
+          clickGuardarYSiguiente();
+        }
+      });
       if (wait.aborted) { log('⏹ Detenido por el usuario.'); return; }
       if (wait.popup) {
         log(`SIGED mostró un mensaje: "${wait.popup}". Detengo para que lo revises a mano.`);
