@@ -110,7 +110,8 @@
   }
 
   // Saca el alumno del GXState (las captions de SIGED contienen literalmente
-  // "alumno: NOMBRE APELLIDO ..."). Cae al DOM si no aparece en el state.
+  // "alumno: NOMBRE APELLIDO ..."). Cae al DOM si no aparece en el state
+  // (por ejemplo después del primer postback, donde GXState queda vacío).
   function detectAlumno(state) {
     state = state || readGxState();
     if (state) {
@@ -127,9 +128,30 @@
       });
       if (best) return best;
     }
-    const candidates = $$('span, h1, h2, h3, td, div');
-    for (const el of candidates) {
+    // Fallback DOM: el nombre del alumno suele aparecer como caption en
+    // distintos contenedores. Probamos varios.
+    const candIds = [
+      'span_TXTTITULO', 'TXTTITULO',
+      'span_TXTSUBTITULO', 'TXTSUBTITULO',
+      'TBL_ALUMNO', 'TBLLIBDATOS',
+      'TABLETITULOCONTENIDO', 'TABLETITULOCONTENIDO2', 'TABLETITULOCONTENIDO3',
+    ];
+    for (const id of candIds) {
+      const el = document.getElementById(id);
+      if (!el) continue;
       const t = (el.textContent || '').trim();
+      const m = t.match(/alumno:\s*([^\n\r]{2,120})/i);
+      if (m) return m[1].trim();
+      // Algunos titulares solo muestran el nombre sin "alumno:".
+      if (t && t.length > 4 && t.length < 120 && /[A-ZÁÉÍÓÚÑ][a-záéíóúñ]/.test(t) && !/^cierre|^libreta|^seleccione/i.test(t)) {
+        return t;
+      }
+    }
+    // Último recurso: cualquier span/td con texto que empiece con "alumno:".
+    const all = document.querySelectorAll('span, h1, h2, h3, td, div');
+    for (const el of all) {
+      const t = (el.textContent || '').trim();
+      if (t.length > 200) continue;
       const m = t.match(/^alumno:\s*(.+)$/i);
       if (m && m[1].length < 120) return m[1].trim();
     }
@@ -302,6 +324,9 @@
     if (orales.length) lines.push(`Orales: ${orales.join(', ')}`);
     if (escritos.length) lines.push(`Escritos: ${escritos.join(', ')}`);
     if (otras.length) lines.push(`Otras actividades: ${otras.join(', ')}`);
+    // Si viene del DOM con descripción de cada tarea, lo agregamos como
+    // contexto extra para Claude (sin que vuelva a sumar duplicado).
+    if (periodData.OActividadesDetalle) lines.push(`Detalle de tareas: ${periodData.OActividadesDetalle}`);
     if (periodData.InasInjustificadas || periodData.InasJustificadas || periodData.InasFictas) {
       lines.push(`Inasistencias - injustif.: ${periodData.InasInjustificadas || 0}, justif.: ${periodData.InasJustificadas || 0}, fictas: ${periodData.InasFictas || 0}`);
     }
@@ -729,9 +754,10 @@
   }
 
   // Fallback: si el GXState NO trae períodos para el alumno actual, intentamos
-  // extraer los datos del DOM (HTML rendido de cada fila). Cada fila de la
-  // grilla tiene celdas con OActividadesHTML/OralesHTML/EscritosHTML inline,
-  // y el span_vMSGREND_NNNN suele tener el texto "Período habilitado…".
+  // extraer los datos del DOM. La SEÑAL CONFIABLE de "habilitado" es que el
+  // <select> de Rend o el <textarea> de Juicio NO estén disabled y no estén
+  // ocultos (display:none). Para SIGED esto es lo único editable cuando el
+  // período corresponde "rendir" o "juzgar".
   function extractPeriodsFromDom() {
     const map = new Map();
     const rows = $$('#GridjuiciosContainerTbl > tbody > tr[id^="GridjuiciosContainerRow_"]');
@@ -740,33 +766,49 @@
       const reuCodEl = document.getElementById(`span_vREUCOD_${idx}`);
       const reuCod = (reuCodEl && reuCodEl.textContent.trim()) || '';
       if (!reuCod) continue;
-      // Texto del mensaje del período (habilitado / no habilitado).
-      // El SPAN no siempre existe; fallback a leer la cell por data-colindex.
-      const mensajeEl = document.querySelector(`#${tr.id} [id*="MSGREND_${idx}"], #${tr.id} [id*="MSG_${idx}"]`);
-      const mensaje = (mensajeEl && mensajeEl.textContent.trim()) || '';
-      // Las celdas que contienen las notas tienen títulos / data attributes.
-      // Buscamos cualquier span con un número 0-10 dentro de las cells de la fila.
-      const cellsTexts = Array.from(tr.querySelectorAll('td')).map((td) => td.textContent.trim());
-      const numericCells = cellsTexts.filter((t) => /^\d{1,2}$/.test(t));
-      // Como heurística: tratamos todas las notas numéricas encontradas como
-      // "OActividades" para que el promedio se calcule.
-      const periodData = {
+      const dscEl = document.getElementById(`span_CTLREUDSC1_${idx}`);
+      const dsc = (dscEl && dscEl.textContent.trim()) || '';
+
+      const califSel = document.getElementById(`vCALIFXREUCALIFCOD_${idx}`);
+      const juicioTa = document.getElementById(`vCALIFXREUJUICIO_${idx}`);
+      const enabledCalif = !!califSel && !califSel.disabled
+        && getComputedStyle(califSel).display !== 'none';
+      const enabledJuicio = !!juicioTa && !juicioTa.disabled
+        && getComputedStyle(juicioTa).display !== 'none';
+      const habilitado = enabledCalif || enabledJuicio;
+
+      // Notas: cualquier <span class="ReadonlyAttributeNoBlock"> dentro de la
+      // fila cuyo texto sea un número 0-10. Esos spans incluyen el title con
+      // la fecha + descripción de la tarea.
+      const noteSpans = tr.querySelectorAll('span.ReadonlyAttributeNoBlock');
+      const numericNotes = [];
+      const notasConTitle = [];
+      for (const span of noteSpans) {
+        const t = (span.textContent || '').trim();
+        if (/^\d{1,2}([.,]\d+)?$/.test(t)) {
+          numericNotes.push(t);
+          const title = (span.getAttribute('title') || '').trim();
+          notasConTitle.push(title ? `${t} (${title})` : t);
+        }
+      }
+
+      map.set(reuCod.trim(), {
         ReuCod: reuCod,
-        ReuDsc: (document.getElementById(`span_CTLREUDSC1_${idx}`) || {}).textContent || '',
+        ReuDsc: dsc,
         Orales: '',
         Escritos: '',
-        OActividades: numericCells.join(' '),
-        Mensaje: mensaje,
-        AsigPideRendimiento: !!document.getElementById(`vCALIFXREUCALIFCOD_${idx}`),
-        AsigPideJuicio: !!document.getElementById(`vCALIFXREUJUICIO_${idx}`),
-        EntregaHabilitada: /habilitado/i.test(mensaje) && !/no habilitado/i.test(mensaje),
-        CalifxReuJuicio: '',
-        CalifxReuCalifCod: '',
+        OActividades: numericNotes.join(' '),
+        OActividadesDetalle: notasConTitle.join(' · '),
+        Mensaje: habilitado ? 'Período habilitado (DOM)' : 'Período no habilitado',
+        AsigPideRendimiento: !!califSel,
+        AsigPideJuicio: !!juicioTa,
+        EntregaHabilitada: habilitado,
+        CalifxReuJuicio: juicioTa ? juicioTa.value : '',
+        CalifxReuCalifCod: califSel ? califSel.value : '',
         InasInjustificadas: '',
         InasJustificadas: '',
         InasFictas: '',
-      };
-      map.set(reuCod.trim(), periodData);
+      });
     }
     return map;
   }
