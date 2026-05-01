@@ -10,6 +10,12 @@
     model: 'claude-sonnet-4-5',
     maxChars: 280,
     tone: 'Profesional, claro, conciso, en español rioplatense. Siempre en TERCERA PERSONA refiriéndose al/la estudiante (nunca "vos", "tú" ni "usted"). Evitar adjetivos exagerados y opiniones sobre la familia.',
+    compararConAnterior: true,
+    rubrica1: 'Indica ausencia o falta de entrega del trabajo.',
+    rubrica24: 'Debe mejorar la calidad de sus producciones.',
+    rubrica56: 'Trabajo satisfactorio: cumple con lo solicitado.',
+    rubrica78: 'Muy buen trabajo: se destaca en varios aspectos.',
+    rubrica910: 'Trabajo destacado: producción de alta calidad.',
   };
 
   // ---------------------------------------------------------------------------
@@ -224,25 +230,31 @@
     return partes.join('; ') + '.';
   }
 
-  function buildSystemPrompt(maxChars, tone) {
-    return [
+  function buildSystemPrompt(cfg) {
+    const lines = [
       'Sos un asistente que ayuda a docentes uruguayos a redactar juicios de evaluación para boletines escolares (SIGED).',
       'REGLA OBLIGATORIA: el juicio se redacta SIEMPRE en tercera persona, refiriéndose al/la estudiante (por ejemplo: "demuestra", "presenta dificultades", "logra"). Nunca uses segunda persona ("vos", "tú", "usted") ni primera persona.',
       'No uses emojis ni signos de exclamación múltiples. No emitas juicios sobre la familia. Respetá la privacidad.',
       'No inventes datos: usá únicamente la información provista. No menciones nombres de tareas concretas si no se pasan.',
       'Sé breve y concreto: una o dos oraciones bastan.',
-      'RÚBRICA OBLIGATORIA al interpretar las notas:',
-      '  • Una nota igual a 1 indica ausencia o falta de entrega del trabajo. Mencionar entregas pendientes si las hay.',
-      '  • Notas de 2 a 4 (cualquier nota menor a 5) indican que debe mejorar la calidad de sus producciones.',
-      '  • Notas de 5 o más indican un trabajo a destacar; cuanto más alta, más fuerte la valoración (5-6 satisfactorio; 7-8 muy bueno; 9-10 destacado).',
+      'RÚBRICA OBLIGATORIA al interpretar las notas (definida por el/la docente):',
+      `  • Nota 1: ${cfg.rubrica1}`,
+      `  • Notas 2 a 4: ${cfg.rubrica24}`,
+      `  • Notas 5 a 6: ${cfg.rubrica56}`,
+      `  • Notas 7 a 8: ${cfg.rubrica78}`,
+      `  • Notas 9 a 10: ${cfg.rubrica910}`,
       'Si conviven notas en distintos rangos, equilibrá lo positivo con lo a mejorar (por ejemplo: "logra X, aunque debe mejorar Y").',
-      `Largo máximo: ${maxChars} caracteres. Devolvé SOLO el texto del juicio, sin comillas ni encabezados.`,
-      `Tono solicitado: ${tone}`,
-    ].join('\n');
+    ];
+    if (cfg.compararConAnterior) {
+      lines.push('Cuando se incluya el "Historial de períodos anteriores", usalo para describir el PROCESO del/la estudiante: progreso, mantenimiento o retroceso respecto al período inmediato anterior. Evitá repetir literalmente juicios anteriores.');
+    }
+    lines.push(`Largo máximo: ${cfg.maxChars} caracteres. Devolvé SOLO el texto del juicio, sin comillas ni encabezados.`);
+    lines.push(`Tono solicitado: ${cfg.tone}`);
+    return lines.join('\n');
   }
 
-  function buildUserMessage({ alumno, libreta, periodoDsc, notasDetalle, promedio, clasif }) {
-    return [
+  function buildUserMessage({ alumno, libreta, periodoDsc, notasDetalle, promedio, clasif, historial, incluirHistorial }) {
+    const parts = [
       `Alumno: ${alumno || 'N/D'}`,
       `Libreta/Asignatura: ${libreta || 'N/D'}`,
       `Período evaluado: ${periodoDsc || 'N/D'}`,
@@ -251,9 +263,20 @@
       '',
       'Detalle de notas del período:',
       notasDetalle || '(sin notas registradas)',
-      '',
-      'Redactá el juicio de la asignatura para este período aplicando la rúbrica.',
-    ].join('\n');
+    ];
+    if (incluirHistorial && historial && historial.length) {
+      parts.push('');
+      parts.push('Historial de períodos anteriores (más antiguo primero):');
+      for (const h of historial) {
+        const piezas = [];
+        if (h.rend) piezas.push(`Rend.: ${h.rend}`);
+        if (h.juicio) piezas.push(`Juicio: ${h.juicio.replace(/\s+/g, ' ').slice(0, 240)}`);
+        parts.push(`- ${h.dsc}: ${piezas.join(' | ') || '(sin datos cerrados)'}`);
+      }
+    }
+    parts.push('');
+    parts.push('Redactá el juicio de la asignatura para este período aplicando la rúbrica' + (incluirHistorial ? ' y, si hay datos previos, contrastá con el período anterior.' : '.'));
+    return parts.join('\n');
   }
 
   function callClaude(payload) {
@@ -329,7 +352,7 @@
         apiKey: CFG.apiKey,
         model: CFG.model,
         maxTokens: 1024,
-        system: buildSystemPrompt(CFG.maxChars, CFG.tone),
+        system: buildSystemPrompt(CFG),
         userMsg: buildUserMessage({
           alumno: opts.alumno,
           libreta: opts.libreta,
@@ -337,6 +360,8 @@
           notasDetalle,
           promedio,
           clasif,
+          historial: opts.historial,
+          incluirHistorial: !!CFG.compararConAnterior,
         }),
       });
       const recortado = text.length > CFG.maxChars ? text.slice(0, CFG.maxChars).replace(/\s+\S*$/, '') : text;
@@ -351,6 +376,22 @@
     return { ok: true, msg: `${row.dsc}: ${partes.join(' ') || 'sin cambios'}` };
   }
 
+  // Construye el historial: para cada fila previa a la actual, sus datos
+  // cerrados (Rend. y/o juicio guardados). Incluye solo períodos con datos.
+  function historialAntesDe(rows, periodMap, currentIdx) {
+    const out = [];
+    for (let i = 0; i < currentIdx; i++) {
+      const r = rows[i];
+      const data = periodMap.get((r.code || '').trim());
+      if (!data) continue;
+      const rend = (data.CalifxReuCalifCod || '').trim();
+      const juicio = (data.CalifxReuJuicio || '').trim();
+      if (!rend && !juicio) continue;
+      out.push({ dsc: r.dsc || r.code, rend, juicio });
+    }
+    return out;
+  }
+
   // Procesa la grilla completa del alumno actual. Devuelve resumen.
   async function procesarAlumnoActual(log, abortSignal) {
     const state = readGxState();
@@ -362,10 +403,12 @@
     const alumno = detectAlumno(state);
     const libreta = detectLibreta(state);
     log(`Alumno: ${alumno || '?'} · Libreta: ${libreta || '?'} · Filas: ${rows.length}`);
-    for (const row of rows) {
+    for (let i = 0; i < rows.length; i++) {
+      const row = rows[i];
       if (abortSignal && abortSignal.aborted) return { ok: false, alumno, aborted: true };
+      const historial = CFG.compararConAnterior ? historialAntesDe(rows, periodMap, i) : [];
       try {
-        const r = await procesarFila(row, periodMap, { alumno, libreta });
+        const r = await procesarFila(row, periodMap, { alumno, libreta, historial });
         log((r.ok ? '✓ ' : '· ') + r.msg);
       } catch (err) {
         log(`✗ ${row.dsc || row.code}: ${err.message}`);
@@ -883,7 +926,9 @@
     const refreshStatus = () => {
       const s = panel.querySelector('[data-fld="cfg-status"]');
       if (CFG.apiKey) {
-        s.textContent = `Modelo: ${CFG.model} · Máx ${CFG.maxChars} chars · 3ra persona`;
+        const partes = [`Modelo: ${CFG.model}`, `Máx ${CFG.maxChars} chars`, '3ra persona'];
+        if (CFG.compararConAnterior) partes.push('+ contraste con período anterior');
+        s.textContent = partes.join(' · ');
       } else {
         s.innerHTML = 'Falta API key. Abrí el ícono de la extensión para configurarla.';
       }
