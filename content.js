@@ -154,6 +154,29 @@
   // ---------------------------------------------------------------------------
   // Construcción de prompt y llamada al background
   // ---------------------------------------------------------------------------
+  // Clasifica las notas numéricas del período según la rúbrica solicitada:
+  //   1                 -> ausencia / no entrega
+  //   2..4 (< 5)        -> debe mejorar la calidad de las producciones
+  //   >= 5              -> trabajo a destacar (más alto = más fuerte)
+  function clasificarNotas(numeros) {
+    const ausencias = numeros.filter((n) => Math.round(n) === 1).length;
+    const aMejorar = numeros.filter((n) => n >= 2 && n < 5).length;
+    const buenas = numeros.filter((n) => n >= 5 && n < 9).length;
+    const destacadas = numeros.filter((n) => n >= 9).length;
+    return { ausencias, aMejorar, buenas, destacadas, total: numeros.length };
+  }
+
+  function rubricaResumen(c, promedio) {
+    if (!c.total) return 'No hay notas numéricas en el período.';
+    const partes = [];
+    if (c.ausencias) partes.push(`${c.ausencias} ausencia(s) o no entrega(s) (notas iguales a 1)`);
+    if (c.aMejorar) partes.push(`${c.aMejorar} nota(s) entre 2 y 4 (debe mejorar la calidad de sus producciones)`);
+    if (c.buenas) partes.push(`${c.buenas} nota(s) entre 5 y 8 (trabajo suficiente o bueno a destacar)`);
+    if (c.destacadas) partes.push(`${c.destacadas} nota(s) de 9 o 10 (trabajo muy destacado)`);
+    partes.push(`Promedio: ${promedio == null ? 'N/D' : promedio.toFixed(2)}`);
+    return partes.join('; ') + '.';
+  }
+
   function buildSystemPrompt(maxChars, tone) {
     return [
       'Sos un asistente que ayuda a docentes uruguayos a redactar juicios de evaluación para boletines escolares (SIGED).',
@@ -161,22 +184,28 @@
       'No uses emojis ni signos de exclamación múltiples. No emitas juicios sobre la familia. Respetá la privacidad.',
       'No inventes datos: usá únicamente la información provista. No menciones nombres de tareas concretas si no se pasan.',
       'Sé breve y concreto: una o dos oraciones bastan.',
+      'RÚBRICA OBLIGATORIA al interpretar las notas:',
+      '  • Una nota igual a 1 indica ausencia o falta de entrega del trabajo. Mencionar entregas pendientes si las hay.',
+      '  • Notas de 2 a 4 (cualquier nota menor a 5) indican que debe mejorar la calidad de sus producciones.',
+      '  • Notas de 5 o más indican un trabajo a destacar; cuanto más alta, más fuerte la valoración (5-6 satisfactorio; 7-8 muy bueno; 9-10 destacado).',
+      'Si conviven notas en distintos rangos, equilibrá lo positivo con lo a mejorar (por ejemplo: "logra X, aunque debe mejorar Y").',
       `Largo máximo: ${maxChars} caracteres. Devolvé SOLO el texto del juicio, sin comillas ni encabezados.`,
       `Tono solicitado: ${tone}`,
     ].join('\n');
   }
 
-  function buildUserMessage({ alumno, libreta, periodoDsc, notasDetalle, promedio }) {
+  function buildUserMessage({ alumno, libreta, periodoDsc, notasDetalle, promedio, clasif }) {
     return [
       `Alumno: ${alumno || 'N/D'}`,
       `Libreta/Asignatura: ${libreta || 'N/D'}`,
       `Período evaluado: ${periodoDsc || 'N/D'}`,
       `Promedio numérico calculado: ${promedio == null ? 'sin notas numéricas' : promedio.toFixed(2)}`,
+      `Resumen según rúbrica: ${rubricaResumen(clasif, promedio)}`,
       '',
       'Detalle de notas del período:',
       notasDetalle || '(sin notas registradas)',
       '',
-      'Redactá el juicio de la asignatura para este período.',
+      'Redactá el juicio de la asignatura para este período aplicando la rúbrica.',
     ].join('\n');
   }
 
@@ -248,6 +277,7 @@
 
     let juicioCompletado = null;
     if (periodData.AsigPideJuicio && row.juicio && !row.juicio.disabled) {
+      const clasif = clasificarNotas(numeros);
       const text = await callClaude({
         apiKey: CFG.apiKey,
         model: CFG.model,
@@ -259,6 +289,7 @@
           periodoDsc: row.dsc,
           notasDetalle,
           promedio,
+          clasif,
         }),
       });
       const recortado = text.length > CFG.maxChars ? text.slice(0, CFG.maxChars).replace(/\s+\S*$/, '') : text;
@@ -380,7 +411,8 @@
     panel.id = 'siged-juicios-panel';
     panel.innerHTML = `
       <style>
-        #siged-juicios-panel{position:fixed;bottom:16px;right:16px;z-index:99999;background:#1f2937;color:#f9fafb;
+        #siged-juicios-panel{position:fixed!important;bottom:16px!important;right:16px!important;left:auto!important;top:auto!important;
+          z-index:2147483647!important;background:#1f2937;color:#f9fafb;display:block!important;visibility:visible!important;
           font:13px/1.4 system-ui,sans-serif;border-radius:12px;box-shadow:0 8px 24px rgba(0,0,0,.25);width:340px;overflow:hidden}
         #siged-juicios-panel header{background:#111827;padding:10px 12px;display:flex;justify-content:space-between;align-items:center;cursor:move}
         #siged-juicios-panel header h3{margin:0;font-size:14px;font-weight:600}
@@ -502,11 +534,29 @@
   }
 
   function bootstrap() {
+    // Solo el frame principal monta el panel; si SIGED usa iframes la grilla
+    // está en este mismo top window (la captura de referencia así lo indica).
+    if (window.top !== window.self) return;
+    if (!document.body) {
+      // body todavía no listo: reintentar.
+      setTimeout(bootstrap, 200);
+      return;
+    }
+    console.log('[SIGED Juicios] content.js cargado en', location.href);
     buildPanel();
-    const obs = new MutationObserver(() => {
+    // MutationObserver por si la SPA reemplaza el DOM…
+    try {
+      const obs = new MutationObserver(() => {
+        if (!document.getElementById('siged-juicios-panel')) buildPanel();
+      });
+      obs.observe(document.body, { childList: true, subtree: true });
+    } catch (_) { /* ignore */ }
+    // …y un setInterval defensivo por si el observer muere o si el body se
+    // reemplaza completo (pasa con algunos postbacks de GeneXus).
+    setInterval(() => {
+      if (!document.body) return;
       if (!document.getElementById('siged-juicios-panel')) buildPanel();
-    });
-    obs.observe(document.body, { childList: true, subtree: true });
+    }, 2000);
   }
 
   if (document.readyState === 'loading') {
