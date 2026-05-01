@@ -538,36 +538,57 @@
   // Mapeo conocido (instancia candersen):
   //   SECTIONPOPUP        → mensajes generales, botón BTNCONTINUARPOPUP "Continuar"
   //   SECTIONPOPUPDIAG    → popup diagnóstico,  botón BTNCERRARPOPUPDIAG  "Cerrar"
-  //   TABLEPANELES_MPAGE  → master page (sesión por expirar, etc.), botones MPAGE
+  //   TBMENSAJE_MPAGE     → master page (sesión por expirar), botón BTNCERRARMASTARDE_MPAGE
+  // NO incluimos TABLEPANELES_MPAGE: ese es el contenedor permanente del cuerpo
+  // de la página; tomarlo como popup hace que escanee toda la barra de
+  // herramientas y termine clickeando BTNGUARDARYANTERIOR.
   const POPUP_MAP = [
     { container: 'SECTIONPOPUPDIAG', confirmBtn: 'BTNCERRARPOPUPDIAG' },
     { container: 'SECTIONPOPUP',     confirmBtn: 'BTNCONTINUARPOPUP' },
+    { container: 'TBMENSAJE_MPAGE',  confirmBtn: 'BTNCERRARMASTARDE_MPAGE' },
   ];
+
+  // Botones que JAMÁS deben tratarse como confirmación de popup: son los de la
+  // barra principal y los del menú lateral. Si el detector se confunde, esta
+  // lista evita un loop catastrófico (clickear "anterior" mientras se intenta
+  // guardar y avanzar).
+  const TOOLBAR_BTN_BLACKLIST = new Set([
+    'BTNGUARDARYSIGUIENTE',
+    'BTNGUARDARYANTERIOR',
+    'BTNGUARDAR',
+    'BTNGUARDARSIN',
+    'BTNCANCELAR',
+    'BTNREGRESAR',
+    'BTNATRAS',
+    'BTNBUSCAR',
+    'BTNLIMPIAR',
+    'BTNSALIR_MPAGE',
+    'BTNCERRAR_MPAGE',
+  ]);
 
   function popupVisible() {
     for (const p of POPUP_MAP) {
       const el = document.getElementById(p.container);
-      if (el && isVisible(el)) {
-        const txt = (el.textContent || '').trim();
-        if (txt) return { id: p.container, text: txt.slice(0, 200), el, knownBtn: p.confirmBtn };
-      }
-    }
-    // Master-page popup: típico aviso de sesión por expirar.
-    const mpage = document.getElementById('TABLEPANELES_MPAGE');
-    if (mpage && isVisible(mpage)) {
-      const txt = (mpage.textContent || '').trim();
-      if (txt && txt.length > 5) return { id: 'TABLEPANELES_MPAGE', text: txt.slice(0, 200), el: mpage, knownBtn: 'BTNCERRARMASTARDE_MPAGE' };
+      if (!el || !isVisible(el)) continue;
+      const txt = (el.textContent || '').trim();
+      if (!txt) continue;
+      // Heurística adicional: el contenedor debe ser razonablemente acotado
+      // (un popup tiene poco contenido comparado con la página entera).
+      if (txt.length > 1500) continue;
+      return { id: p.container, text: txt.slice(0, 200), el, knownBtn: p.confirmBtn };
     }
     return null;
   }
 
   // Busca el botón a clickear para cerrar el popup. Primero el conocido por
-  // contenedor; después IDs típicos; después texto afirmativo y, como
-  // último recurso, texto de "cerrar / cancelar".
+  // contenedor; después IDs típicos; después texto afirmativo. Nunca devuelve
+  // un botón de la barra principal (TOOLBAR_BTN_BLACKLIST).
   function findPopupConfirmButton(popup) {
+    const safe = (el) => el && !el.disabled && isVisible(el) && !TOOLBAR_BTN_BLACKLIST.has(el.id);
+
     if (popup && popup.knownBtn) {
       const el = document.getElementById(popup.knownBtn);
-      if (el && !el.disabled && isVisible(el)) return el;
+      if (safe(el)) return el;
     }
     const ids = [
       'BTNCERRARPOPUPDIAG', 'BTNCONTINUARPOPUP',
@@ -577,23 +598,23 @@
     ];
     for (const id of ids) {
       const el = document.getElementById(id);
-      if (el && !el.disabled && isVisible(el)) return el;
+      if (safe(el)) return el;
     }
-    const positivos = /^(s[ií]|aceptar|continuar|ok|confirmar|entendido|guardar)\b/i;
+    // Solo escaneamos texto DENTRO del popup activo (no en toda la página).
+    if (!popup || !popup.el) return null;
+    // Quitamos "guardar" del regex porque colisiona con la barra principal
+    // (BTNGUARDARYSIGUIENTE/ANTERIOR). Solo aceptamos textos típicos de un
+    // botón de popup.
+    const positivos = /^(s[ií]|aceptar|continuar|ok|confirmar|entendido)\b/i;
     const negativos = /^(cerrar(\s+m[aá]s\s+tarde)?|m[aá]s\s+tarde|saltar|omitir|salir|volver|cancelar|cerrar)\b/i;
-    const containers = popup ? [popup.el] : POPUP_MAP.map((p) => document.getElementById(p.container)).filter(Boolean);
     let firstNeg = null;
-    for (const c of containers) {
-      if (!isVisible(c)) continue;
-      const btns = c.querySelectorAll('button, input[type=button], input[type=submit], a, span, div[role=button]');
-      for (const btn of btns) {
-        if (btn.disabled) continue;
-        if (!isVisible(btn)) continue;
-        const t = (btn.value || btn.textContent || btn.title || '').trim();
-        if (!t || t.length > 60) continue;
-        if (positivos.test(t)) return btn;
-        if (negativos.test(t) && !firstNeg) firstNeg = btn;
-      }
+    const btns = popup.el.querySelectorAll('button, input[type=button], input[type=submit], a, span, div[role=button]');
+    for (const btn of btns) {
+      if (!safe(btn)) continue;
+      const t = (btn.value || btn.textContent || btn.title || '').trim();
+      if (!t || t.length > 60) continue;
+      if (positivos.test(t)) return btn;
+      if (negativos.test(t) && !firstNeg) firstNeg = btn;
     }
     return firstNeg;
   }
