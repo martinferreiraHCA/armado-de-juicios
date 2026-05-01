@@ -883,44 +883,75 @@
   // Devuelve un mapa { periodName -> { orales, escritas, oAct, rendText } }
   // leyendo la grilla de notas FreeStyleGrid del cuerpo de la página.
   // Devuelve un mapa { periodName -> { orales, escritas, oAct, rendText } }.
-  // Usa selectores EXACTOS (table.beTableLibretaEval, no class*=…) para evitar
-  // que `[class*="beTableLibretaEval"]` matchee también las sub-tablas
-  // .beTableLibretaCabezalEval / .beTableLibretaDatosEval, y para no depender
-  // de table.FreeStyleGrid (que en algunas páginas no aparece como wrapper).
+  // Estrategia: para cada table.beTableLibretaEval enumeramos TODOS los spans
+  // y filtramos los que tienen contenido numérico 0-10. La columna (Orales /
+  // Escritas / O.Act / R) la deducimos por la posición del <td> padre dentro
+  // de su propia fila. Esto sortea cualquier variación de estructura interna
+  // (tbody implícito, divs intermedios, etc.).
   function gradesFromFreeStyleGrid() {
     const map = new Map();
     const evalTables = document.querySelectorAll('table.beTableLibretaEval');
-    let withHeader = 0;
-    let withData = 0;
+    let totalNotas = 0;
     for (const evalTbl of evalTables) {
-      // Nombre del período: span dentro del cabezal directo.
-      const headerSpan = evalTbl.querySelector('tr.beTableLibretaCabezalEval span, table.beTableLibretaCabezalEval span');
+      const headerSpan = evalTbl.querySelector('.beTableLibretaCabezalEval span, tr.beTableLibretaCabezalEval span');
       if (!headerSpan) continue;
-      withHeader += 1;
       const name = (headerSpan.textContent || '').trim();
       if (!name) continue;
       debugViz.mark(headerSpan, debugViz.colors.period, `período: ${name}`);
-      // Tabla interna de datos.
+
+      // Buscamos solo dentro de la tabla de DATOS (Orales/Escritas/O.Act/R),
+      // así no agarramos por error el span del nombre del período.
       const dataTbl = evalTbl.querySelector('table.beTableLibretaDatosEval');
-      if (!dataTbl) continue;
-      withData += 1;
-      const trs = dataTbl.querySelectorAll(':scope > tbody > tr');
-      if (trs.length < 2) continue;
-      const dataRow = trs[trs.length - 1]; // última fila = datos (la primera es header Orales/Escritas/O.Act)
-      const tds = dataRow.querySelectorAll(':scope > td');
-      const orales = extractNotesFromCell(tds[0], 'Orales');
-      const escritas = extractNotesFromCell(tds[1], 'Escritas');
-      const oAct = extractNotesFromCell(tds[2], 'O.Act');
-      const rendCell = tds[3];
-      const rendSpan = rendCell ? rendCell.querySelector('span') : null;
-      const rendText = (rendSpan && rendSpan.textContent.trim()) || '';
-      if (rendCell && rendText) {
-        debugViz.mark(rendSpan || rendCell, debugViz.colors.rendCell, `R visible: ${rendText}`);
+      const haystack = dataTbl || evalTbl;
+      const allSpans = haystack.querySelectorAll('span');
+      const grouped = { orales: [], escritas: [], oAct: [], R: [] };
+      for (const s of allSpans) {
+        const t = (s.textContent || '').trim();
+        if (!t) continue;
+        if (!/^\d{1,2}([.,]\d{1,2})?$/.test(t)) continue;
+        const num = parseFloat(t.replace(',', '.'));
+        if (Number.isNaN(num) || num < 0 || num > 10) continue;
+        const cls = (typeof s.className === 'string') ? s.className : '';
+        const colorBaja = /ColorTextoBaja/i.test(cls);
+        const tooltip = collectTooltipText(s);
+        const tip = tooltip + (colorBaja ? (tooltip ? ' — ' : '') + 'marcada como insuficiente' : '');
+        // Columna: posición del <td> padre dentro de su <tr>.
+        const parentTd = s.closest('td');
+        let columna = '';
+        let colIdx = -1;
+        if (parentTd && parentTd.parentNode) {
+          const tds = Array.from(parentTd.parentNode.children).filter((c) => c.tagName === 'TD');
+          colIdx = tds.indexOf(parentTd);
+          columna = ['Orales', 'Escritas', 'O.Act', 'R'][colIdx] || `col${colIdx}`;
+        }
+        const labelTip = tip ? ` ${tip.slice(0, 30)}…` : '';
+        debugViz.mark(s, debugViz.colors.note, `${columna || 'nota'}: ${t}${labelTip}`);
+        const note = { value: t, num, tooltip: tip, columna, colorBaja };
+        if (colIdx === 0) grouped.orales.push(note);
+        else if (colIdx === 1) grouped.escritas.push(note);
+        else if (colIdx === 2) grouped.oAct.push(note);
+        else if (colIdx === 3) grouped.R.push(note);
+        else grouped.oAct.push(note); // por las dudas
+        totalNotas += 1;
       }
-      map.set(name.trim(), { orales, escritas, oAct, rendText });
+      const rendText = grouped.R.length ? grouped.R[0].value : '';
+      if (rendText) {
+        // El span de R ya quedó marcado como "R: N", lo subimos a amarillo.
+        const rendSpan = grouped.R[0] && haystack.querySelectorAll('span')[0]; // no útil, dejamos el verde
+      }
+      // Si no encontramos NADA, dejamos un dump para debug.
+      if (!grouped.orales.length && !grouped.escritas.length && !grouped.oAct.length && !grouped.R.length) {
+        try { console.warn(`[SIGED Juicios] sin notas para "${name}". data table HTML:`, dataTbl ? dataTbl.outerHTML.slice(0, 1500) : evalTbl.outerHTML.slice(0, 1500)); } catch (_) {}
+      }
+      map.set(name.trim(), {
+        orales: grouped.orales,
+        escritas: grouped.escritas,
+        oAct: grouped.oAct,
+        rendText,
+      });
     }
     try {
-      console.log(`[SIGED Juicios] FreeStyleGrid: ${evalTables.length} table.beTableLibretaEval encontradas (${withHeader} con header, ${withData} con datos, ${map.size} períodos con nombre).`);
+      console.log(`[SIGED Juicios] FreeStyleGrid: ${evalTables.length} tablas eval procesadas, ${totalNotas} nota(s) numérica(s) encontradas, ${map.size} períodos en el mapa.`);
     } catch (_) {}
     return map;
   }
