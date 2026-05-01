@@ -493,13 +493,22 @@
     return new Promise((resolve) => setTimeout(resolve, ms));
   }
 
+  // Devuelve un snapshot de "qué encontré en la pantalla", útil para diagnóstico.
+  function inspectPage() {
+    const stateRaw = readGxStateRaw();
+    const hasGxState = !!stateRaw;
+    let state = null;
+    if (stateRaw) { try { state = JSON.parse(stateRaw); } catch (_) {} }
+    const tbl = document.getElementById('GridjuiciosContainerTbl');
+    const rows = tbl ? tbl.querySelectorAll('tbody > tr[id^="GridjuiciosContainerRow_"]').length : 0;
+    const periods = state ? collectPeriodDataFromState(state).size : 0;
+    return { hasGxState, hasTable: !!tbl, rows, periods, state };
+  }
+
   // Devuelve true cuando hay grilla con filas y períodos en GXState (alumno listo).
   function gridReady() {
-    const rows = $$('#GridjuiciosContainerTbl > tbody > tr[id^="GridjuiciosContainerRow_"]');
-    if (!rows.length) return false;
-    const state = readGxState();
-    if (!state) return false;
-    return collectPeriodDataFromState(state).size > 0;
+    const i = inspectPage();
+    return i.hasGxState && i.hasTable && i.rows > 0 && i.periods > 0;
   }
 
   async function waitForGridReady(timeoutMs, abortSignal) {
@@ -621,12 +630,39 @@
   async function procesarTodos(log, abortSignal) {
     const procesados = new Set();
     let i = 0;
+    let firstIteration = true;
     while (true) {
       if (abortSignal.aborted) { log('⏹ Detenido por el usuario.'); return; }
 
-      const ready = await waitForGridReady(15000, abortSignal);
-      if (ready.aborted) { log('⏹ Detenido por el usuario.'); return; }
-      if (!ready.ready) { log('La grilla no quedó lista a tiempo. Detengo.'); return; }
+      // En la primera iteración no bloqueamos esperando: si algo falta lo
+      // diagnosticamos. En las siguientes (después del save+navegación) sí
+      // esperamos a que SIGED termine de cargar el siguiente alumno.
+      if (!firstIteration) {
+        const ready = await waitForGridReady(20000, abortSignal);
+        if (ready.aborted) { log('⏹ Detenido por el usuario.'); return; }
+        if (!ready.ready) {
+          const diag = inspectPage();
+          log(`Tras el guardado la grilla no se repobló (gxState=${diag.hasGxState}, tabla=${diag.hasTable}, filas=${diag.rows}, períodos=${diag.periods}). Asumo fin de grupo.`);
+          return;
+        }
+      } else {
+        // Diagnóstico inicial visible para el usuario.
+        const diag = inspectPage();
+        log(`Estado inicial: gxState=${diag.hasGxState}, tabla=${diag.hasTable}, filas=${diag.rows}, períodos=${diag.periods}.`);
+        if (!diag.hasTable) {
+          log('No encontré la tabla "GridjuiciosContainerTbl". ¿Estás en "Cerrar Prom. por Alumno" con un alumno abierto?');
+          return;
+        }
+        if (diag.rows === 0) {
+          log('La tabla existe pero no tiene filas. Abrí un alumno y volvé a intentar.');
+          return;
+        }
+        if (diag.periods === 0) {
+          log('La tabla tiene filas pero el GXState no trae datos de períodos. Posible: ningún período está habilitado para este alumno o SIGED renderizó la pantalla con otro SDT. Detengo para evitar perder datos.');
+          return;
+        }
+      }
+      firstIteration = false;
 
       i += 1;
       log(`\n— Alumno #${i} —`);
