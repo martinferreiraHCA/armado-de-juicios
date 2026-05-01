@@ -444,11 +444,24 @@
       // hacemos retry tras 1.5s (lazy-load probable).
       log('   GXState sin datos de período — intento extraer del DOM…');
       periodMap = extractPeriodsFromDom();
-      const algunaConNotas = Array.from(periodMap.values()).some((p) => (p.OActividades || '').trim().length);
+      const algunaConNotas = Array.from(periodMap.values()).some((p) => (p.OActividades || p.Orales || p.Escritos || '').trim().length);
       if (!algunaConNotas) {
         log('   …sin notas en el DOM, esperando 2s y reintentando (probable lazy-load)…');
         await sleep(2000);
         periodMap = extractPeriodsFromDom();
+      }
+      // Log de lo que encontramos por período (diagnóstico).
+      const resumen = Array.from(periodMap.values())
+        .filter((p) => (p.Orales || p.Escritos || p.OActividades || '').trim() || p.EntregaHabilitada)
+        .map((p) => {
+          const o = (p.Orales || '').trim().split(/\s+/).filter(Boolean).length;
+          const e = (p.Escritos || '').trim().split(/\s+/).filter(Boolean).length;
+          const a = (p.OActividades || '').trim().split(/\s+/).filter(Boolean).length;
+          return `${p.ReuDsc || p.ReuCod}: O=${o} E=${e} A=${a}${p.RendVisible ? ` R=${p.RendVisible}` : ''}${p.EntregaHabilitada ? ' [habilitado]' : ''}`;
+        });
+      if (resumen.length) {
+        log('   📊 Notas detectadas por período:');
+        for (const r of resumen) log(`      ${r}`);
       }
       usandoFallback = true;
     }
@@ -789,13 +802,84 @@
     } catch (_) {}
   }
 
-  // Fallback: si el GXState NO trae períodos para el alumno actual, intentamos
-  // extraer los datos del DOM. La SEÑAL CONFIABLE de "habilitado" es que el
-  // <select> de Rend o el <textarea> de Juicio NO estén disabled y no estén
-  // ocultos (display:none). Para SIGED esto es lo único editable cuando el
-  // período corresponde "rendir" o "juzgar".
+  // Helpers de scrapping de la grilla real de notas (FreeStyleGrid) ----------
+  // Estructura observada (capturada con el modo scrapping del panel):
+  //   table.FreeStyleGrid > tbody > tr > td.beTableEvalFiltro:nth-of-type(N)
+  //     └─ table.beTableLibretaEval
+  //        ├─ tr.beTableLibretaCabezalEval > td > table > tbody > tr > td
+  //        │    └─ span.ReadonlyAttribute  ← nombre del período
+  //        └─ tr > td > table.beTableLibretaDatosEval
+  //           └─ tbody
+  //              ├─ tr (header: Orales | Escritas | O.Act | R)
+  //              └─ tr (data row con <td><span>6</span><span>8</span>…</td> por columna)
+
+  function collectTooltipText(el) {
+    const parts = [
+      el.getAttribute('title'),
+      el.getAttribute('data-content'),
+      el.getAttribute('aria-label'),
+      el.getAttribute('data-original-title'),
+      el.getAttribute('data-tip'),
+    ].map((s) => (s || '').trim()).filter(Boolean);
+    return Array.from(new Set(parts)).join(' — ');
+  }
+
+  function extractNotesFromCell(td) {
+    if (!td) return [];
+    const out = [];
+    const spans = td.querySelectorAll('span');
+    for (const s of spans) {
+      const t = (s.textContent || '').trim();
+      if (!t) continue;
+      if (!/^\d{1,2}([.,]\d{1,2})?$/.test(t)) continue;
+      const num = parseFloat(t.replace(',', '.'));
+      if (Number.isNaN(num) || num < 0 || num > 10) continue;
+      out.push({ value: t, num, tooltip: collectTooltipText(s) });
+    }
+    return out;
+  }
+
+  // Devuelve un mapa { periodName -> { orales, escritas, oAct, rendText } }
+  // leyendo la grilla de notas FreeStyleGrid del cuerpo de la página.
+  function gradesFromFreeStyleGrid() {
+    const map = new Map();
+    const grids = document.querySelectorAll('table.FreeStyleGrid, table[class*="FreeStyleGrid"]');
+    for (const grid of grids) {
+      const periodCells = grid.querySelectorAll('td[class*="beTableEvalFiltro"]');
+      for (const cell of periodCells) {
+        const evalTbl = cell.querySelector('table[class*="beTableLibretaEval"]');
+        if (!evalTbl) continue;
+        const nameSpan = evalTbl.querySelector('table[class*="beTableLibretaCabezalEval"] span');
+        const name = (nameSpan && nameSpan.textContent.trim()) || '';
+        if (!name) continue;
+        const dataTbl = evalTbl.querySelector('table[class*="beTableLibretaDatosEval"]');
+        if (!dataTbl) continue;
+        const trs = dataTbl.querySelectorAll(':scope > tbody > tr');
+        if (trs.length < 2) continue;
+        // El header puede ser la primera o segunda fila según rendering;
+        // preferimos la última fila como datos.
+        const dataRow = trs[trs.length - 1];
+        const tds = dataRow.querySelectorAll(':scope > td');
+        const orales = extractNotesFromCell(tds[0]);
+        const escritas = extractNotesFromCell(tds[1]);
+        const oAct = extractNotesFromCell(tds[2]);
+        const rendCell = tds[3];
+        const rendSpan = rendCell ? rendCell.querySelector('span') : null;
+        const rendText = (rendSpan && rendSpan.textContent.trim()) || '';
+        // Algunos renderizados no usan 4 columnas (solo 3); en ese caso
+        // dejamos rendText vacío.
+        map.set(name.trim(), { orales, escritas, oAct, rendText });
+      }
+    }
+    return map;
+  }
+
+  // Fallback: combina la grilla de notas (FreeStyleGrid) con la grilla de
+  // entrada (GridjuiciosContainerTbl) que tiene los <select> y <textarea>
+  // editables. Las cruzamos por nombre de período.
   function extractPeriodsFromDom() {
     const map = new Map();
+    const grades = gradesFromFreeStyleGrid();
     const rows = $$('#GridjuiciosContainerTbl > tbody > tr[id^="GridjuiciosContainerRow_"]');
     for (const tr of rows) {
       const idx = (tr.id.match(/_(\d+)$/) || [])[1];
@@ -813,55 +897,26 @@
         && getComputedStyle(juicioTa).display !== 'none';
       const habilitado = enabledCalif || enabledJuicio;
 
-      // Notas: cualquier span dentro de la fila cuyo texto sea un número 0-10.
-      // No filtramos por clase porque GX usa nombres con espacios variables;
-      // tampoco por visibilidad estricta porque las sub-tablas plegables a
-      // veces tienen los grades dentro pero con la fila aún pintando.
-      // Para CADA nota capturamos todos los atributos "tooltip" (title,
-      // data-content, aria-label, data-original-title) y también el TD
-      // siguiente, que a veces lleva un comentario adicional del docente.
-      const numericNotes = [];
-      const notasConTitle = [];
-      const allSpans = tr.querySelectorAll('span');
-      for (const span of allSpans) {
-        const t = (span.textContent || '').trim();
-        if (!t) continue;
-        if (!/^\d{1,2}([.,]\d{1,2})?$/.test(t)) continue;
-        const num = parseFloat(t.replace(',', '.'));
-        if (Number.isNaN(num) || num < 0 || num > 10) continue;
-        numericNotes.push(t);
-        const tooltipParts = [
-          span.getAttribute('title'),
-          span.getAttribute('data-content'),
-          span.getAttribute('aria-label'),
-          span.getAttribute('data-original-title'),
-          span.getAttribute('data-tip'),
-        ].map((s) => (s || '').trim()).filter(Boolean);
-        // Algunos comentarios del docente viven en un span hermano oculto.
-        const sibling = span.parentElement
-          ? span.parentElement.querySelector('span.beReadonlyAttributeBlockComment, span[class*=Comment], div[class*=tooltip]')
-          : null;
-        if (sibling) {
-          const sibText = (sibling.textContent || '').trim();
-          if (sibText) tooltipParts.push(sibText);
-        }
-        const tooltipText = Array.from(new Set(tooltipParts)).join(' — ');
-        notasConTitle.push(tooltipText ? `${t} (${tooltipText})` : t);
-      }
+      const g = grades.get(dsc) || { orales: [], escritas: [], oAct: [], rendText: '' };
+      const all = [...g.orales, ...g.escritas, ...g.oAct];
+      const detalle = all
+        .map((n) => n.tooltip ? `${n.value} (${n.tooltip})` : n.value)
+        .join(' · ');
 
       map.set(reuCod.trim(), {
         ReuCod: reuCod,
         ReuDsc: dsc,
-        Orales: '',
-        Escritos: '',
-        OActividades: numericNotes.join(' '),
-        OActividadesDetalle: notasConTitle.join(' · '),
+        Orales: g.orales.map((n) => n.value).join(' '),
+        Escritos: g.escritas.map((n) => n.value).join(' '),
+        OActividades: g.oAct.map((n) => n.value).join(' '),
+        OActividadesDetalle: detalle,
         Mensaje: habilitado ? 'Período habilitado (DOM)' : 'Período no habilitado',
         AsigPideRendimiento: !!califSel,
         AsigPideJuicio: !!juicioTa,
         EntregaHabilitada: habilitado,
         CalifxReuJuicio: juicioTa ? juicioTa.value : '',
-        CalifxReuCalifCod: califSel ? califSel.value : '',
+        CalifxReuCalifCod: califSel ? califSel.value : (g.rendText || ''),
+        RendVisible: g.rendText, // Promedio que SIGED ya muestra (read-only)
         InasInjustificadas: '',
         InasJustificadas: '',
         InasFictas: '',
