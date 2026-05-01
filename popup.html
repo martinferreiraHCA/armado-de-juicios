@@ -4,24 +4,30 @@
   <meta charset="utf-8">
   <title>SIGED · Juicios IA</title>
   <style>
-    body{margin:0;padding:14px;width:320px;font:13px/1.4 system-ui,sans-serif;background:#1f2937;color:#f9fafb}
+    body{margin:0;padding:14px;width:360px;font:13px/1.4 system-ui,sans-serif;background:#1f2937;color:#f9fafb}
     h1{margin:0 0 10px;font-size:14px}
+    h2{margin:14px 0 6px;font-size:11px;color:#93c5fd;text-transform:uppercase;letter-spacing:.04em}
     label{display:flex;flex-direction:column;gap:3px;margin-bottom:8px;font-size:11px;color:#9ca3af}
+    label.check{flex-direction:row;align-items:center;gap:6px;color:#f9fafb;font-size:12px}
+    label.check input{width:auto;margin:0}
     input,select,textarea{background:#374151;color:#f9fafb;border:1px solid #4b5563;border-radius:6px;padding:6px 8px;font:inherit;width:100%;box-sizing:border-box}
     .row{display:flex;gap:6px}
     .row > label{flex:1}
+    fieldset{border:1px solid #4b5563;border-radius:6px;padding:8px;margin:0 0 8px 0}
+    fieldset legend{padding:0 6px;font-size:11px;color:#9ca3af}
     button.primary{background:#2563eb;color:#fff;border:0;padding:8px 12px;border-radius:6px;cursor:pointer;font-weight:600;width:100%;margin-top:6px}
     button.primary:disabled{background:#4b5563;cursor:not-allowed}
+    button.link{background:transparent;border:0;color:#93c5fd;text-decoration:underline;cursor:pointer;font:inherit;padding:4px 0 0;width:100%;text-align:center}
     .hint{font-size:11px;color:#9ca3af;margin-top:6px}
     .ok{color:#34d399}
     .err{color:#f87171}
-    a{color:#93c5fd}
   </style>
 </head>
 <body>
   <h1>SIGED · Juicios IA</h1>
 
-  <label>API key de Claude
+  <h2>Claude API</h2>
+  <label>API key
     <input type="password" id="apiKey" placeholder="sk-ant-...">
   </label>
 
@@ -38,16 +44,41 @@
     </label>
   </div>
 
-  <label>Tono / instrucciones
-    <textarea id="tone" rows="4"></textarea>
+  <h2>Estilo del juicio</h2>
+  <label>Tono / instrucciones generales
+    <textarea id="tone" rows="3"></textarea>
   </label>
 
+  <label class="check">
+    <input type="checkbox" id="compararConAnterior">
+    Contrastar con períodos anteriores (evaluación de proceso)
+  </label>
+
+  <h2>Rúbrica (qué significa cada nota)</h2>
+  <fieldset>
+    <legend>Rangos numéricos</legend>
+    <label>Nota 1
+      <input type="text" id="rubrica1">
+    </label>
+    <label>Notas 2 a 4
+      <input type="text" id="rubrica24">
+    </label>
+    <label>Notas 5 a 6
+      <input type="text" id="rubrica56">
+    </label>
+    <label>Notas 7 a 8
+      <input type="text" id="rubrica78">
+    </label>
+    <label>Notas 9 a 10
+      <input type="text" id="rubrica910">
+    </label>
+  </fieldset>
+
   <button class="primary" id="save">Guardar configuración</button>
+  <button class="link" id="reset">Restaurar valores por defecto</button>
 
   <div class="hint" id="status">
-    Cargá tu API key y abrí la pantalla
-    <em>Cerrar Prom. por Alumno</em> en SIGED. Después tocá
-    <em>Generar juicios</em> en el panel flotante.
+    Cargá tu API key y abrí <em>Cerrar Prom. por Alumno</em> en SIGED.
   </div>
 
   <script src="popup.js"></script>
