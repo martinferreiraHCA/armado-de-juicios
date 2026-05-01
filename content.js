@@ -512,60 +512,83 @@
     return { ready: false, timeout: true };
   }
 
+  // Considera "visible" si tiene caja real en pantalla (offsetParent puede ser
+  // null para elementos con position:fixed aunque sí se vean).
+  function isVisible(el) {
+    if (!el) return false;
+    const r = el.getBoundingClientRect();
+    if (r.width === 0 && r.height === 0) return false;
+    const cs = getComputedStyle(el);
+    if (cs.display === 'none' || cs.visibility === 'hidden' || cs.opacity === '0') return false;
+    return true;
+  }
+
   function popupVisible() {
-    // SIGED muestra mensajes en varios contenedores: SECTIONPOPUP / SECTIONPOPUPDIAG / DIAG
-    // o cualquier div con clase de modal. Agarramos el primero visible.
-    const ids = ['SECTIONPOPUP', 'SECTIONPOPUPDIAG', 'DIAG', 'TBMSJPOPUP', 'TBMSJPOPUPDIAG'];
-    for (const id of ids) {
+    // Primer pase: contenedores conocidos.
+    const fixedIds = ['SECTIONPOPUP', 'SECTIONPOPUPDIAG', 'DIAG', 'TBMSJPOPUP', 'TBMSJPOPUPDIAG'];
+    for (const id of fixedIds) {
       const el = document.getElementById(id);
-      if (el && el.offsetParent !== null) {
+      if (el && isVisible(el)) {
         const txt = (el.textContent || '').trim();
         if (txt) return { id, text: txt.slice(0, 200), el };
       }
     }
+    // Segundo pase: cualquier elemento con id que contenga POPUP o DIAG y sea visible.
+    const all = document.querySelectorAll('[id*="POPUP"], [id*="Popup"], [id*="DIAG"], [id*="Diag"], [id*="MODAL"], [id*="Modal"]');
+    for (const el of all) {
+      if (!isVisible(el)) continue;
+      const txt = (el.textContent || '').trim();
+      if (txt && txt.length > 5 && txt.length < 1000) return { id: el.id, text: txt.slice(0, 200), el };
+    }
     return null;
   }
 
-  // Busca un botón "Continuar / Aceptar / Sí" dentro de un popup activo de SIGED.
-  function findPopupConfirmButton() {
-    // 1) IDs típicos del framework.
+  // Busca un botón dentro de un popup activo de SIGED para confirmarlo / cerrarlo.
+  // Prueba IDs conocidos, después texto afirmativo, y como último recurso
+  // botones de "Cerrar más tarde / Salir / Cancelar" para popups informativos
+  // (ej. EVALUACIÓN DIAGNÓSTICA INTERDISCIPLINARIA).
+  function findPopupConfirmButton(popupEl) {
     const ids = [
-      'BTNCONTINUARPOPUP',
-      'BTNACEPTARPOPUP',
-      'BTNACEPTAR',
-      'BTNSI',
-      'BTNENTENDIDO_MPAGE',
-      'BTNCERRARMASTARDE_MPAGE',
-      'BTNCERRARPOPUPDIAG',
+      // Confirmación
+      'BTNCONTINUARPOPUP', 'BTNACEPTARPOPUP', 'BTNACEPTAR', 'BTNSI',
+      'BTNENTENDIDO_MPAGE', 'BTNCONTINUAR', 'BTNGUARDARPOPUP',
+      // Cerrar / saltear
+      'BTNCERRARMASTARDE_MPAGE', 'BTNCERRARPOPUPDIAG', 'BTNCERRARPOPUP',
+      'BTNSALIR_MPAGE', 'BTNSALIR', 'BTNVOLVER', 'BTNREGRESAR',
     ];
     for (const id of ids) {
       const el = document.getElementById(id);
-      if (el && !el.disabled && el.offsetParent !== null) return el;
+      if (el && !el.disabled && isVisible(el)) return el;
     }
-    // 2) Cualquier botón visible dentro de un popup activo cuyo texto sea afirmativo.
-    const containers = ['SECTIONPOPUP', 'SECTIONPOPUPDIAG', 'DIAG'];
-    for (const cid of containers) {
-      const c = document.getElementById(cid);
-      if (!c || c.offsetParent === null) continue;
-      const btns = c.querySelectorAll('button, input[type=button], input[type=submit], a, span');
+    // Buscar por texto. Damos prioridad a "Continuar/Aceptar" sobre "Cerrar/Cancelar".
+    const positivos = /^(s[ií]|aceptar|continuar|ok|confirmar|entendido|guardar)\b/i;
+    const negativos = /^(cerrar(\s+m[aá]s\s+tarde)?|m[aá]s\s+tarde|saltar|omitir|salir|volver|cancelar|cerrar)\b/i;
+    const containers = popupEl ? [popupEl] : Array.from(document.querySelectorAll('[id*="POPUP"], [id*="Popup"], [id*="DIAG"], [id*="Diag"]'));
+    let firstNeg = null;
+    for (const c of containers) {
+      if (!isVisible(c)) continue;
+      const btns = c.querySelectorAll('button, input[type=button], input[type=submit], a, span, div[role=button]');
       for (const btn of btns) {
         if (btn.disabled) continue;
-        if (btn.offsetParent === null) continue;
-        const t = (btn.value || btn.textContent || '').trim();
-        if (!t || t.length > 40) continue;
-        if (/^(s[ií]|aceptar|continuar|ok|guardar|confirmar|entendido)$/i.test(t)) return btn;
+        if (!isVisible(btn)) continue;
+        const t = (btn.value || btn.textContent || btn.title || '').trim();
+        if (!t || t.length > 60) continue;
+        if (positivos.test(t)) return btn;
+        if (negativos.test(t) && !firstNeg) firstNeg = btn;
       }
     }
-    return null;
+    return firstNeg;
   }
 
-  // Si hay un popup de SIGED esperando confirmación, lo cerramos clickeando
-  // el botón afirmativo. Devuelve el texto del popup confirmado o null.
   function autoConfirmPopup() {
     const pop = popupVisible();
     if (!pop) return null;
-    const btn = findPopupConfirmButton();
-    if (!btn) return { confirmed: false, text: pop.text };
+    const btn = findPopupConfirmButton(pop.el);
+    if (!btn) {
+      // Diagnóstico: dejá visible el HTML para investigar IDs/textos faltantes.
+      try { console.warn('[SIGED Juicios] popup sin botón confirmable:', pop.el.outerHTML.slice(0, 1500)); } catch (_) {}
+      return { confirmed: false, text: pop.text };
+    }
     clickLikeUser(btn);
     return { confirmed: true, text: pop.text, button: btn.id || (btn.value || btn.textContent || '').trim() };
   }
