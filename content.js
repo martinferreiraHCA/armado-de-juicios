@@ -461,6 +461,7 @@
     let sawBusy = false;
     let lastLog = 0;
     let confirmados = 0;
+    let dumpedAt = 0;
     while (Date.now() - t0 < timeoutMs) {
       if (abortSignal && abortSignal.aborted) return { aborted: true };
       // Si GX abrió un popup de confirmación lo aceptamos automáticamente.
@@ -479,10 +480,18 @@
       const busy = gxBusy(el);
       if (busy) sawBusy = true;
       if (sawBusy && !busy) return { complete: true, confirmados };
+      const elapsedMs = Date.now() - t0;
       if (Date.now() - lastLog > 5000 && log) {
-        const elapsed = Math.round((Date.now() - t0) / 1000);
+        const elapsed = Math.round(elapsedMs / 1000);
         log(`   …esperando a GeneXus (${elapsed}s, busy=${busy})`);
         lastLog = Date.now();
+      }
+      // Si llevamos mucho tiempo en busy=true sin popup detectable, volcamos
+      // un diagnóstico para entender qué pide SIGED.
+      if (busy && elapsedMs > 15000 && !dumpedAt && log) {
+        dumpedAt = elapsedMs;
+        log('   ⚠ GeneXus lleva 15s ocupado sin popup detectable. Volcado de diagnóstico:');
+        dumpDiagnostic(log);
       }
       await sleep(300);
     }
@@ -572,12 +581,43 @@
       if (!el || !isVisible(el)) continue;
       const txt = (el.textContent || '').trim();
       if (!txt) continue;
-      // Heurística adicional: el contenedor debe ser razonablemente acotado
-      // (un popup tiene poco contenido comparado con la página entera).
-      if (txt.length > 1500) continue;
       return { id: p.container, text: txt.slice(0, 200), el, knownBtn: p.confirmBtn };
     }
     return null;
+  }
+
+  // Vuelco diagnóstico: imprime el estado de todos los contenedores y botones
+  // candidatos en este momento. Lo usamos cuando GX queda en busy=true mucho
+  // tiempo para entender qué le falta.
+  function dumpDiagnostic(log) {
+    const containers = [
+      'SECTIONPOPUP', 'SECTIONPOPUPDIAG', 'TBMSJPOPUP', 'TBMSJPOPUPDIAG',
+      'TBMENSAJE_MPAGE', 'TABLEDIAGNOSTICO', 'TBLANTECEDENTES', 'DIAG',
+      'TABLEPANELES_MPAGE', 'SECTION1_MPAGE',
+    ];
+    for (const id of containers) {
+      const el = document.getElementById(id);
+      if (!el) continue;
+      const cs = getComputedStyle(el);
+      const len = (el.textContent || '').trim().length;
+      const r = el.getBoundingClientRect();
+      log(`     #${id}: visible=${isVisible(el)} display=${cs.display} chars=${len} box=${Math.round(r.width)}x${Math.round(r.height)}`);
+    }
+    // Botones potencialmente clickeables, fuera de la lista negra de toolbar.
+    const btns = Array.from(document.querySelectorAll('button, input[type=button], input[type=submit]'));
+    const candidates = btns
+      .filter((b) => isVisible(b) && !TOOLBAR_BTN_BLACKLIST.has(b.id) && !b.disabled)
+      .map((b) => `${b.id || '?'}="${(b.value || b.textContent || '').trim().slice(0, 40)}"`);
+    log(`     visibles: ${candidates.slice(0, 25).join(', ') || '(ninguno)'}`);
+    try {
+      console.log('[SIGED Juicios] dumpDiagnostic — popups y botones', {
+        popups: containers.map((id) => {
+          const el = document.getElementById(id);
+          return el ? { id, visible: isVisible(el), display: getComputedStyle(el).display, len: (el.textContent || '').trim().length, html: el.outerHTML.slice(0, 800) } : { id, present: false };
+        }),
+        buttons: candidates,
+      });
+    } catch (_) {}
   }
 
   // Busca el botón a clickear para cerrar el popup. Primero el conocido por
