@@ -839,15 +839,45 @@
   //              ├─ tr (header: Orales | Escritas | O.Act | R)
   //              └─ tr (data row con <td><span>6</span><span>8</span>…</td> por columna)
 
+  // Lee la metadata de hover de un span de nota. Captura el atributo `title`
+  // y todos los `data-*` típicos de tooltips (Bootstrap, jQuery UI, etc.).
+  // Algunos componentes inicializan el tooltip de forma "lazy" — el title
+  // pasa a data-original-title en el primer mouseenter — así que disparamos
+  // un mouseenter sintético antes de leer.
   function collectTooltipText(el) {
-    const parts = [
-      el.getAttribute('title'),
-      el.getAttribute('data-content'),
-      el.getAttribute('aria-label'),
-      el.getAttribute('data-original-title'),
-      el.getAttribute('data-tip'),
-    ].map((s) => (s || '').trim()).filter(Boolean);
-    return Array.from(new Set(parts)).join(' — ');
+    const seen = new Set();
+    const parts = [];
+    const ATTRS = /^(title|alt|aria-label|data-content|data-original-title|data-tip|data-tooltip|data-text|data-detalle|data-comentario|data-fecha|data-info|data-descripcion)$/i;
+    const readAttrs = (e) => {
+      if (!e || !e.attributes) return;
+      for (const a of e.attributes) {
+        if (!ATTRS.test(a.name)) continue;
+        const v = (a.value || '').trim();
+        if (v && !seen.has(v)) { seen.add(v); parts.push(v); }
+      }
+    };
+    readAttrs(el);
+    // Intentar inicializar tooltip lazy con un mouseenter sintético.
+    if (!parts.length) {
+      try {
+        el.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, cancelable: true }));
+        el.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
+        readAttrs(el);
+      } catch (_) { /* ignore */ }
+    }
+    // También miramos el TD padre y el siguiente hermano (algunos UI guardan
+    // el detalle en un span/div hermano oculto).
+    const parentTd = el.parentElement;
+    if (parentTd) {
+      readAttrs(parentTd);
+      // Sibling spans con clase Comment / Detalle / Tooltip
+      const sibling = parentTd.querySelector('span[class*="Comment"], span[class*="Detalle"], span[class*="Comentario"], div[class*="tooltip"]');
+      if (sibling && sibling !== el) {
+        const txt = (sibling.textContent || '').trim();
+        if (txt && !seen.has(txt)) { seen.add(txt); parts.push(txt); }
+      }
+    }
+    return parts.join(' — ');
   }
 
   function extractNotesFromCell(td, columnLabel) {
@@ -924,7 +954,7 @@
           colIdx = tds.indexOf(parentTd);
           columna = ['Orales', 'Escritas', 'O.Act', 'R'][colIdx] || `col${colIdx}`;
         }
-        const labelTip = tip ? ` ${tip.slice(0, 30)}…` : '';
+        const labelTip = tip ? ` ${tip.slice(0, 60)}` : '';
         debugViz.mark(s, debugViz.colors.note, `${columna || 'nota'}: ${t}${labelTip}`);
         const note = { value: t, num, tooltip: tip, columna, colorBaja };
         if (colIdx === 0) grouped.orales.push(note);
@@ -1507,6 +1537,7 @@
         <button class="primary alt" data-act="run-all">Procesar todo el grupo (auto)</button>
         <button class="danger" data-act="stop" hidden>⏹ Detener</button>
         <button class="secondary" data-act="diag">🔍 Diagnóstico ahora</button>
+        <button class="secondary" data-act="precarga-tooltips">💬 Pre-cargar tooltips de notas</button>
         <label class="check-row">
           <input type="checkbox" data-fld="debug-toggle">
           🐞 Modo debug visual (pinta lo que toca)
@@ -1624,6 +1655,25 @@
         log('🔍 Diagnóstico de la pantalla actual:');
         dumpDiagnostic(log);
         log('   (HTML completo y GXState raw en F12 → Console)');
+        return;
+      }
+      if (act === 'precarga-tooltips') {
+        const spans = document.querySelectorAll('table.beTableLibretaEval span');
+        let ok = 0;
+        for (const s of spans) {
+          const t = (s.textContent || '').trim();
+          if (!/^\d{1,2}([.,]\d{1,2})?$/.test(t)) continue;
+          try {
+            s.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true, cancelable: true }));
+            s.dispatchEvent(new MouseEvent('mouseover', { bubbles: true, cancelable: true }));
+            ok += 1;
+          } catch (_) {}
+        }
+        log(`   Pre-cargados ${ok} tooltips (mouseenter sintético).`);
+        // Pequeña espera y volvemos a extraer para que el debug visual se actualice.
+        await sleep(500);
+        const m = gradesFromFreeStyleGrid();
+        log(`   Tras precarga: ${m.size} períodos detectados.`);
         return;
       }
       if (act === 'scrap-toggle') {
