@@ -489,6 +489,13 @@
     return el.getAttribute('data-gx-evt-inprogress') === 'true';
   }
 
+  // GX está procesando algo si CUALQUIER elemento del DOM tiene el flag de
+  // evento en curso. Útil entre alumnos: a veces el "save" termina pero GX
+  // todavía está cargando datos del próximo alumno con otros evt-inprogress.
+  function gxBusyAnywhere() {
+    return !!document.querySelector('[data-gx-evt-inprogress="true"]');
+  }
+
   async function waitForGxIdle(idOrEl, timeoutMs, abortSignal) {
     const t0 = Date.now();
     while (Date.now() - t0 < timeoutMs) {
@@ -573,7 +580,9 @@
     const t0 = Date.now();
     while (Date.now() - t0 < timeoutMs) {
       if (abortSignal && abortSignal.aborted) return { ready: false, aborted: true };
-      if (gridReady()) return { ready: true };
+      // La grilla se considera lista solo si tiene datos Y GeneXus no está
+      // procesando NINGÚN evento (ningún input/botón con evt-inprogress).
+      if (gridReady() && !gxBusyAnywhere()) return { ready: true };
       await sleep(400);
     }
     return { ready: false, timeout: true };
@@ -723,26 +732,35 @@
   // Espera a que el GXState (input hidden de GeneXus) cambie, indicando que
   // SIGED hizo el postback y cargó al siguiente alumno; después espera a que
   // la grilla quede lista de nuevo.
-  async function waitForNextStudent(prevStateRaw, timeoutMs, abortSignal, onTick) {
+  async function waitForNextStudent(prevStateRaw, timeoutMs, abortSignal, log) {
     const t0 = Date.now();
+    let stateChanged = false;
+    let lastLog = 0;
     while (Date.now() - t0 < timeoutMs) {
       if (abortSignal && abortSignal.aborted) return { changed: false, aborted: true };
       const pop = popupVisible();
       if (pop) return { changed: false, popup: `${pop.id}: ${pop.text}` };
-      const cur = readGxStateRaw();
-      if (cur && cur !== prevStateRaw) {
-        // GXState cambió: esperar a que la grilla del nuevo alumno esté lista.
-        const ready = await waitForGridReady(timeoutMs - (Date.now() - t0), abortSignal);
-        if (ready.aborted) return { changed: false, aborted: true };
-        if (!ready.ready) return { changed: false, gridStuck: true };
+
+      if (!stateChanged) {
+        const cur = readGxStateRaw();
+        if (cur && cur !== prevStateRaw) {
+          stateChanged = true;
+          if (log) log('   → postback registrado; esperando que cargue la grilla del siguiente alumno…');
+        }
+      } else if (gridReady() && !gxBusyAnywhere()) {
         return { changed: true };
       }
-      if (typeof onTick === 'function') {
-        try { await onTick(Date.now() - t0); } catch (_) { /* ignore */ }
+
+      if (Date.now() - lastLog > 10000 && log) {
+        const elapsed = Math.round((Date.now() - t0) / 1000);
+        const fase = stateChanged ? 'cargando próximo alumno' : 'esperando postback';
+        const diag = inspectPage();
+        log(`   …${fase} (${elapsed}s, busy=${gxBusyAnywhere()}, filas=${diag.rows}, períodos=${diag.periods})`);
+        lastLog = Date.now();
       }
-      await sleep(400);
+      await sleep(500);
     }
-    return { changed: false, timeout: true };
+    return { changed: false, timeout: !stateChanged, gridStuck: stateChanged };
   }
 
   async function procesarTodos(log, abortSignal) {
@@ -850,18 +868,21 @@
 
       // GX terminó el evento; ahora esperamos a que la grilla se repueble
       // con el siguiente alumno (o el GXState cambie, o aparezca un popup).
-      const wait = await waitForNextStudent(stateBefore, 30000, abortSignal);
+      // Timeout generoso porque candersen.siged es un sitio lento.
+      const wait = await waitForNextStudent(stateBefore, 90000, abortSignal, log);
       if (wait.aborted) { log('⏹ Detenido por el usuario.'); return; }
       if (wait.popup) {
         log(`SIGED mostró un mensaje: "${wait.popup}". Detengo para que lo revises a mano.`);
         return;
       }
       if (wait.gridStuck) {
-        log('SIGED postbackeó pero la grilla no se repobló. Asumo fin de grupo.');
+        log('SIGED postbackeó pero la grilla no terminó de cargar tras 90s. Volcado de diagnóstico:');
+        dumpDiagnostic(log);
+        log('Asumo fin de grupo.');
         return;
       }
       if (!wait.changed) {
-        log('No detecté postback tras 45s. Detengo (¿último alumno o error?).');
+        log('No detecté postback tras 90s. Detengo (¿último alumno o error?).');
         return;
       }
       // Settle wait: damos 5 segundos extra después de que SIGED carga el
