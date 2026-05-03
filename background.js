@@ -1,39 +1,50 @@
-// Service worker MV3: hace la llamada a la API de Claude (evita CORS desde la página)
-// y devuelve el texto del juicio al content script.
+// Service worker MV3: hace la llamada a la API del proveedor de IA elegido
+// (evita CORS desde la página) y devuelve el texto al content script.
 
-const ANTHROPIC_URL = 'https://api.anthropic.com/v1/messages';
+importScripts('providers.js');
 
 chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
-  if (msg && msg.type === 'callClaude') {
-    callClaude(msg.payload)
+  if (!msg) return;
+  // Mensaje genérico nuevo
+  if (msg.type === 'callAi') {
+    callAi(msg.payload)
       .then((text) => sendResponse({ ok: true, text }))
-      .catch((err) => sendResponse({ ok: false, error: String(err && err.message || err) }));
-    return true; // mantener canal abierto para respuesta async
+      .catch((err) => sendResponse({ ok: false, error: String((err && err.message) || err) }));
+    return true;
+  }
+  // Compatibilidad con versiones previas: callClaude → forzamos proveedor anthropic.
+  if (msg.type === 'callClaude') {
+    const payload = Object.assign({}, msg.payload, { provider: 'anthropic' });
+    callAi(payload)
+      .then((text) => sendResponse({ ok: true, text }))
+      .catch((err) => sendResponse({ ok: false, error: String((err && err.message) || err) }));
+    return true;
   }
 });
 
-async function callClaude({ apiKey, model, system, userMsg, maxTokens }) {
-  if (!apiKey) throw new Error('Falta API key de Claude');
-  const res = await fetch(ANTHROPIC_URL, {
+async function callAi({ provider, apiKey, model, system, userMsg, maxTokens }) {
+  const id = provider || 'anthropic';
+  const p = SIGED_PROVIDERS[id];
+  if (!p) throw new Error(`Proveedor desconocido: ${id}`);
+  if (!apiKey) throw new Error(`Falta API key del proveedor ${p.label || id}.`);
+  if (!model) throw new Error(`Falta modelo (proveedor: ${id}).`);
+
+  const url = p.url(model, apiKey);
+  const headers = p.headers(apiKey);
+  const body = p.body(model, system, userMsg, maxTokens || 1024);
+
+  const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'content-type': 'application/json',
-      'x-api-key': apiKey,
-      'anthropic-version': '2023-06-01',
-      'anthropic-dangerous-direct-browser-access': 'true',
-    },
-    body: JSON.stringify({
-      model,
-      max_tokens: maxTokens || 1024,
-      system,
-      messages: [{ role: 'user', content: userMsg }],
-    }),
+    headers,
+    body: JSON.stringify(body),
   });
   const raw = await res.text();
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${raw.slice(0, 300)}`);
+  if (!res.ok) {
+    throw new Error(`[${p.label || id}] HTTP ${res.status}: ${raw.slice(0, 400)}`);
+  }
   let data;
-  try { data = JSON.parse(raw); } catch { throw new Error(`Respuesta no JSON: ${raw.slice(0, 200)}`); }
-  const text = (data.content || []).map((b) => b.text || '').join('').trim();
-  if (!text) throw new Error('Respuesta vacía de Claude');
+  try { data = JSON.parse(raw); } catch { throw new Error(`[${p.label || id}] respuesta no JSON: ${raw.slice(0, 200)}`); }
+  const text = p.extract(data);
+  if (!text) throw new Error(`[${p.label || id}] respuesta vacía. Cuerpo: ${raw.slice(0, 200)}`);
   return text;
 }
