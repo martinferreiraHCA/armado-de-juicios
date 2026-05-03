@@ -72,6 +72,22 @@
     Ej: min=4, max=7 → un promedio 5 se prorratea a 5,33.
   </p>
 
+  <h2>Banco de juicios (sin IA)</h2>
+  <label class="check">
+    <input type="checkbox" id="usarBanco">
+    Usar banco de juicios en vez de la IA
+  </label>
+  <label>Juicios por nota (formato: línea "Nota N" seguida de uno o más juicios, uno por línea)
+    <textarea id="bancoJuicios" rows="10" placeholder="Nota 4&#10;Reconoce aspectos básicos…&#10;Explora con apoyo docente…&#10;&#10;Nota 5&#10;Comprende aspectos iniciales…"></textarea>
+  </label>
+  <label class="check">
+    <input type="checkbox" id="bancoFallbackIA">
+    Si la nota no está en el banco, usar IA como respaldo
+  </label>
+  <label>Adendum cuando hay entregas pendientes (se agrega solo si el juicio no las menciona)
+    <input type="text" id="bancoPlataformaAddendum">
+  </label>
+
   <h2>Rúbrica (qué significa cada nota)</h2>
   <fieldset>
     <legend>Rangos numéricos</legend>

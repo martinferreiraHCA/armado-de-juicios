@@ -14,6 +14,10 @@
     rendUsarRango: false,
     rendMin: 4,
     rendMax: 7,
+    usarBanco: false,
+    bancoJuicios: '',
+    bancoFallbackIA: true,
+    bancoPlataformaAddendum: 'No debe descuidar las entregas en plataforma.',
     rubrica1: 'No entregó el trabajo o no presentó evidencia (ausencia de producción). Mencionar como entrega pendiente cuando corresponda.',
     rubrica24: 'Producciones insuficientes (notas menores a 5). Reconocer las dificultades pero adoptar tono CONSTRUCTIVO y POSITIVO: subrayar el margen de mejora y los aspectos puntuales a fortalecer; evitar etiquetas desmoralizantes.',
     rubrica56: 'Trabajo satisfactorio: cumple con lo solicitado.',
@@ -260,6 +264,72 @@
     return { ausencias, aMejorar, buenas, destacadas, total: numeros.length };
   }
 
+  // Banco de juicios (modo sin IA): el docente pega un texto con líneas
+  // "Nota N" seguidas de uno o más juicios; el script elige uno al azar
+  // según la nota redondeada y opcionalmente le agrega un adendum si hay
+  // entregas pendientes.
+  function parseBancoJuicios(text) {
+    const map = new Map();
+    if (!text) return map;
+    const lines = String(text).split(/\r?\n/);
+    let currentGrade = null;
+    let currentList = [];
+    const flush = () => {
+      if (currentGrade !== null && currentList.length) {
+        const existing = map.get(currentGrade) || [];
+        map.set(currentGrade, existing.concat(currentList));
+      }
+      currentList = [];
+    };
+    for (const raw of lines) {
+      const line = raw.trim();
+      if (!line) continue;
+      const m = line.match(/^nota\s+(\d{1,2})\b/i);
+      if (m) {
+        flush();
+        currentGrade = parseInt(m[1], 10);
+        continue;
+      }
+      // Headers tipo "Aclaración para plataforma" cierran el bloque.
+      if (/^aclaraci[oó]n/i.test(line) || /^plataforma/i.test(line)) {
+        flush();
+        currentGrade = null;
+        continue;
+      }
+      if (currentGrade !== null && line.length > 5) {
+        currentList.push(line);
+      }
+    }
+    flush();
+    return map;
+  }
+
+  // Cuenta cuántos usos lleva cada juicio para rotarlos en orden y volver a
+  // empezar cuando se agotan.
+  const bancoUsage = new Map(); // grade -> Map(juicio -> count)
+  function pickBancoJuicio(bank, grade) {
+    const list = bank.get(grade);
+    if (!list || !list.length) return null;
+    let counters = bancoUsage.get(grade);
+    if (!counters) { counters = new Map(); bancoUsage.set(grade, counters); }
+    let best = list[0];
+    let bestCount = Infinity;
+    for (const j of list) {
+      const c = counters.get(j) || 0;
+      if (c < bestCount) { bestCount = c; best = j; }
+    }
+    counters.set(best, (counters.get(best) || 0) + 1);
+    return best;
+  }
+
+  function aplicarAdendumPlataforma(juicio, hayAusencias, addendum) {
+    if (!hayAusencias || !addendum || !addendum.trim()) return juicio;
+    const lower = (juicio || '').toLowerCase();
+    const yaMenciona = /(plataforma|entregas?\s+pendientes?|tareas?\s+digitales?|completar\s+(las\s+)?actividades?\s+pendientes?)/i.test(lower);
+    if (yaMenciona) return juicio;
+    return (juicio || '').trim() + ' ' + addendum.trim();
+  }
+
   function rubricaResumen(c, promedio) {
     if (!c.total) return 'No hay notas numéricas en el período.';
     const partes = [];
@@ -393,22 +463,24 @@
       debugViz.mark(row.juicio, debugViz.colors.juicioInput, `Juicio textarea (${row.dsc})`);
     }
 
+    // Prorrateo del promedio (escala 1-10) al rango configurado, si aplica.
+    let promedioFinal = promedio;
+    let prorrateoLog = '';
+    if (promedio != null && CFG.rendUsarRango && CFG.rendMin >= 1 && CFG.rendMax <= 10 && CFG.rendMin < CFG.rendMax) {
+      const clamped = Math.max(1, Math.min(10, promedio));
+      promedioFinal = CFG.rendMin + (clamped - 1) / 9 * (CFG.rendMax - CFG.rendMin);
+      prorrateoLog = ` → prorrateado a ${promedioFinal.toFixed(2)} (rango ${CFG.rendMin}-${CFG.rendMax})`;
+    }
+
     let rendCompletado = null;
-    if (periodData.AsigPideRendimiento && promedio != null && row.califSelect) {
-      // Si el docente activó el rango personalizado, prorrateamos el promedio
-      // (escala 1-10) al rango configurado [rendMin, rendMax] linealmente.
-      let promedioFinal = promedio;
-      let prorrateoLog = '';
-      if (CFG.rendUsarRango && CFG.rendMin >= 1 && CFG.rendMax <= 10 && CFG.rendMin < CFG.rendMax) {
-        const clamped = Math.max(1, Math.min(10, promedio));
-        promedioFinal = CFG.rendMin + (clamped - 1) / 9 * (CFG.rendMax - CFG.rendMin);
-        prorrateoLog = ` → prorrateado a ${promedioFinal.toFixed(2)} (rango ${CFG.rendMin}-${CFG.rendMax})`;
-      }
+    let rendNota = null; // nota numérica final, para usar también en banco
+    if (periodData.AsigPideRendimiento && promedioFinal != null && row.califSelect) {
       const opt = elegirOpcionMasCercana(row.califSelect, promedioFinal);
       if (opt) {
         setNativeValue(row.califSelect, opt.value);
         fireGxChange(row.califSelect);
         rendCompletado = opt.textContent.trim();
+        rendNota = parseFloat((opt.value || opt.textContent).replace(',', '.'));
         debugViz.mark(row.califSelect, debugViz.colors.filled, `✓ Rend=${rendCompletado} (avg ${promedio.toFixed(2)}${prorrateoLog})`);
       }
     }
@@ -416,27 +488,51 @@
     let juicioCompletado = null;
     if (periodData.AsigPideJuicio && row.juicio && !row.juicio.disabled) {
       const clasif = clasificarNotas(numeros);
-      const text = await callClaude({
-        apiKey: CFG.apiKey,
-        model: CFG.model,
-        maxTokens: 1024,
-        system: buildSystemPrompt(CFG),
-        userMsg: buildUserMessage({
-          alumno: opts.alumno,
-          libreta: opts.libreta,
-          periodoDsc: row.dsc,
-          notasDetalle,
-          promedio,
-          clasif,
-          historial: opts.historial,
-          incluirHistorial: !!CFG.compararConAnterior,
-        }),
-      });
+      const hayAusencias = clasif.ausencias > 0;
+      // Nota redondeada que vamos a usar para el banco (sin prorrateo no
+      // tiene sentido buscar entradas; con prorrateo usamos la nota final).
+      const notaParaBanco = rendNota != null ? Math.round(rendNota)
+        : (promedioFinal != null ? Math.round(promedioFinal) : null);
+
+      let text = '';
+      let viaBanco = false;
+      if (CFG.usarBanco) {
+        const bank = parseBancoJuicios(CFG.bancoJuicios || '');
+        const candidato = notaParaBanco != null ? pickBancoJuicio(bank, notaParaBanco) : null;
+        if (candidato) {
+          text = aplicarAdendumPlataforma(candidato, hayAusencias, CFG.bancoPlataformaAddendum);
+          viaBanco = true;
+        }
+      }
+      if (!text) {
+        if (CFG.usarBanco && !CFG.bancoFallbackIA) {
+          text = `(sin juicio en el banco para nota ${notaParaBanco != null ? notaParaBanco : '?'})`;
+        } else {
+          // Camino IA (default).
+          text = await callClaude({
+            apiKey: CFG.apiKey,
+            model: CFG.model,
+            maxTokens: 1024,
+            system: buildSystemPrompt(CFG),
+            userMsg: buildUserMessage({
+              alumno: opts.alumno,
+              libreta: opts.libreta,
+              periodoDsc: row.dsc,
+              notasDetalle,
+              promedio,
+              clasif,
+              historial: opts.historial,
+              incluirHistorial: !!CFG.compararConAnterior,
+            }),
+          });
+          text = aplicarAdendumPlataforma(text, hayAusencias, CFG.bancoPlataformaAddendum);
+        }
+      }
       const recortado = text.length > CFG.maxChars ? text.slice(0, CFG.maxChars).replace(/\s+\S*$/, '') : text;
       setNativeValue(row.juicio, recortado);
       fireGxChange(row.juicio);
       juicioCompletado = recortado;
-      debugViz.mark(row.juicio, debugViz.colors.filled, `✓ Juicio (${recortado.length}c)`);
+      debugViz.mark(row.juicio, debugViz.colors.filled, `✓ Juicio (${recortado.length}c, ${viaBanco ? 'banco' : 'IA'})`);
     }
 
     const partes = [];
@@ -1648,9 +1744,12 @@
 
     const refreshStatus = () => {
       const s = panel.querySelector('[data-fld="cfg-status"]');
-      if (CFG.apiKey) {
-        const partes = [`Modelo: ${CFG.model}`, `Máx ${CFG.maxChars} chars`, '3ra persona'];
-        if (CFG.compararConAnterior) partes.push('+ contraste con período anterior');
+      if (CFG.apiKey || CFG.usarBanco) {
+        const partes = [];
+        if (CFG.usarBanco) partes.push('Banco' + (CFG.bancoFallbackIA ? ' + IA respaldo' : ''));
+        else partes.push(`Modelo: ${CFG.model}`);
+        partes.push(`Máx ${CFG.maxChars} chars`, '3ra persona');
+        if (CFG.compararConAnterior && !CFG.usarBanco) partes.push('+ contraste con período anterior');
         if (CFG.rendUsarRango && CFG.rendMin < CFG.rendMax) partes.push(`Rend ${CFG.rendMin}-${CFG.rendMax}`);
         s.textContent = partes.join(' · ');
       } else {

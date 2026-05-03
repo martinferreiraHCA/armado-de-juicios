@@ -7,6 +7,10 @@ const DEFAULTS = {
   rendUsarRango: false,
   rendMin: 4,
   rendMax: 7,
+  usarBanco: false,
+  bancoJuicios: '',
+  bancoFallbackIA: true,
+  bancoPlataformaAddendum: 'No debe descuidar las entregas en plataforma.',
   rubrica1: 'No entregó el trabajo o no presentó evidencia (ausencia de producción). Mencionar como entrega pendiente cuando corresponda.',
   rubrica24: 'Producciones insuficientes (notas menores a 5). Reconocer las dificultades pero adoptar tono CONSTRUCTIVO y POSITIVO: subrayar el margen de mejora y los aspectos puntuales a fortalecer; evitar etiquetas desmoralizantes.',
   rubrica56: 'Trabajo satisfactorio: cumple con lo solicitado.',
@@ -18,6 +22,7 @@ const FIELDS = [
   'apiKey', 'model', 'maxChars', 'tone',
   'compararConAnterior',
   'rendUsarRango', 'rendMin', 'rendMax',
+  'usarBanco', 'bancoJuicios', 'bancoFallbackIA', 'bancoPlataformaAddendum',
   'rubrica1', 'rubrica24', 'rubrica56', 'rubrica78', 'rubrica910',
 ];
 
