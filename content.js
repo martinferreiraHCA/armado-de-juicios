@@ -15,9 +15,8 @@
     rendUsarRango: false,
     rendMin: 4,
     rendMax: 7,
-    usarBanco: false,
+    modoGeneracion: 'ia', // 'ia' | 'banco' | 'mixto'
     bancoJuicios: '',
-    bancoFallbackIA: true,
     bancoPlataformaAddendum: 'No debe descuidar las entregas en plataforma.',
     rubrica1: 'No entregó el trabajo o no presentó evidencia (ausencia de producción). Mencionar como entrega pendiente cuando corresponda.',
     rubrica24: 'Producciones insuficientes (notas menores a 5). Reconocer las dificultades pero adoptar tono CONSTRUCTIVO y POSITIVO: subrayar el margen de mejora y los aspectos puntuales a fortalecer; evitar etiquetas desmoralizantes.',
@@ -32,8 +31,14 @@
   let CFG = { ...DEFAULTS };
 
   async function loadConfig() {
-    const stored = await chrome.storage.local.get(DEFAULTS);
+    // Leemos TODO lo que haya en storage para poder migrar campos viejos.
+    const stored = await chrome.storage.local.get(null);
     CFG = { ...DEFAULTS, ...stored };
+    // Migración: usarBanco/bancoFallbackIA → modoGeneracion.
+    if (!['ia', 'banco', 'mixto'].includes(CFG.modoGeneracion)) {
+      if (stored.usarBanco) CFG.modoGeneracion = stored.bancoFallbackIA === false ? 'banco' : 'mixto';
+      else CFG.modoGeneracion = 'ia';
+    }
     return CFG;
   }
 
@@ -498,9 +503,11 @@
       const notaParaBanco = rendNota != null ? Math.round(rendNota)
         : (promedioFinal != null ? Math.round(promedioFinal) : null);
 
+      const modo = CFG.modoGeneracion || 'ia';
       let text = '';
       let viaBanco = false;
-      if (CFG.usarBanco) {
+      // Banco si el modo es 'banco' o 'mixto'.
+      if (modo === 'banco' || modo === 'mixto') {
         const bank = parseBancoJuicios(CFG.bancoJuicios || '');
         const candidato = notaParaBanco != null ? pickBancoJuicio(bank, notaParaBanco) : null;
         if (candidato) {
@@ -509,10 +516,10 @@
         }
       }
       if (!text) {
-        if (CFG.usarBanco && !CFG.bancoFallbackIA) {
+        if (modo === 'banco') {
           text = `(sin juicio en el banco para nota ${notaParaBanco != null ? notaParaBanco : '?'})`;
         } else {
-          // Camino IA (default).
+          // Camino IA: 'ia' siempre, 'mixto' como respaldo.
           text = await callClaude({
             provider: CFG.provider || 'anthropic',
             apiKey: CFG.apiKey,
@@ -1749,21 +1756,27 @@
 
     const refreshStatus = () => {
       const s = panel.querySelector('[data-fld="cfg-status"]');
-      if (CFG.apiKey || CFG.usarBanco) {
+      const modo = CFG.modoGeneracion || 'ia';
+      const provLabel = (typeof SIGED_PROVIDERS !== 'undefined' && SIGED_PROVIDERS[CFG.provider])
+        ? SIGED_PROVIDERS[CFG.provider].label.split(' ')[0]
+        : (CFG.provider || 'IA');
+      const tieneBanco = !!(CFG.bancoJuicios || '').trim();
+      const listoIA = !!CFG.apiKey;
+      const listo = (modo === 'ia' && listoIA) || (modo === 'banco' && tieneBanco) || (modo === 'mixto' && (listoIA || tieneBanco));
+      if (listo) {
         const partes = [];
-        if (CFG.usarBanco) partes.push('Banco' + (CFG.bancoFallbackIA ? ' + IA respaldo' : ''));
-        else {
-          const provLabel = (typeof SIGED_PROVIDERS !== 'undefined' && SIGED_PROVIDERS[CFG.provider])
-            ? SIGED_PROVIDERS[CFG.provider].label.split(' ')[0]
-            : (CFG.provider || 'IA');
-          partes.push(`${provLabel}: ${CFG.model}`);
-        }
+        if (modo === 'banco') partes.push('🗂 Banco');
+        else if (modo === 'mixto') partes.push(`🗂 Banco + 🤖 ${provLabel}`);
+        else partes.push(`🤖 ${provLabel}: ${CFG.model}`);
         partes.push(`Máx ${CFG.maxChars} chars`, '3ra persona');
-        if (CFG.compararConAnterior && !CFG.usarBanco) partes.push('+ contraste con período anterior');
+        if (CFG.compararConAnterior && modo !== 'banco') partes.push('+ contraste con período anterior');
         if (CFG.rendUsarRango && CFG.rendMin < CFG.rendMax) partes.push(`Rend ${CFG.rendMin}-${CFG.rendMax}`);
         s.textContent = partes.join(' · ');
       } else {
-        s.innerHTML = 'Falta API key. Abrí el ícono de la extensión para configurarla.';
+        const falta = modo === 'banco' ? 'el banco de juicios está vacío'
+          : modo === 'mixto' ? 'falta API key y/o banco de juicios'
+          : 'falta API key';
+        s.innerHTML = `⚠ Modo ${modo}: ${falta}. Abrí el ícono de la extensión.`;
       }
     };
 
@@ -1818,7 +1831,20 @@
       if (act === 'run' || act === 'run-all') {
         await loadConfig();
         refreshStatus();
-        if (!CFG.apiKey) { log('Falta API key. Configurala desde el ícono de la extensión.'); return; }
+        const modoActivo = CFG.modoGeneracion || 'ia';
+        const tieneBancoActivo = !!(CFG.bancoJuicios || '').trim();
+        if (modoActivo === 'banco' && !tieneBancoActivo) {
+          log('Modo "banco" pero el banco está vacío. Pegá los juicios en el ícono de la extensión.');
+          return;
+        }
+        if (modoActivo === 'ia' && !CFG.apiKey) {
+          log('Modo "IA" pero falta API key. Configurala desde el ícono de la extensión.');
+          return;
+        }
+        if (modoActivo === 'mixto' && !CFG.apiKey && !tieneBancoActivo) {
+          log('Modo "mixto" pero falta API key y banco. Configurá al menos uno.');
+          return;
+        }
 
         if (act === 'run-all') {
           const ok = window.confirm(

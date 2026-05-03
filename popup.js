@@ -8,9 +8,9 @@ const DEFAULTS = {
   rendUsarRango: false,
   rendMin: 4,
   rendMax: 7,
-  usarBanco: false,
+  // Modo de generación: 'ia' (solo IA), 'banco' (solo banco) o 'mixto' (banco + IA respaldo).
+  modoGeneracion: 'ia',
   bancoJuicios: '',
-  bancoFallbackIA: true,
   bancoPlataformaAddendum: 'No debe descuidar las entregas en plataforma.',
   rubrica1: 'No entregó el trabajo o no presentó evidencia (ausencia de producción). Mencionar como entrega pendiente cuando corresponda.',
   rubrica24: 'Producciones insuficientes (notas menores a 5). Reconocer las dificultades pero adoptar tono CONSTRUCTIVO y POSITIVO: subrayar el margen de mejora y los aspectos puntuales a fortalecer; evitar etiquetas desmoralizantes.',
@@ -19,17 +19,24 @@ const DEFAULTS = {
   rubrica910: 'Trabajo destacado: producción de alta calidad.',
 };
 
-// Por proveedor recordamos qué API key cargó el docente y qué modelo eligió,
-// así puede alternar sin pegar la key cada vez.
-const PER_PROVIDER_KEYS = 'siged_provider_keys'; // { providerId: { apiKey, model } }
-
 const FIELDS = [
   'apiKey', 'model', 'maxChars', 'tone',
   'compararConAnterior',
   'rendUsarRango', 'rendMin', 'rendMax',
-  'usarBanco', 'bancoJuicios', 'bancoFallbackIA', 'bancoPlataformaAddendum',
+  'modoGeneracion', 'bancoJuicios', 'bancoPlataformaAddendum',
   'rubrica1', 'rubrica24', 'rubrica56', 'rubrica78', 'rubrica910',
 ];
+
+// Por proveedor recordamos qué API key cargó el docente y qué modelo eligió,
+// así puede alternar sin pegar la key cada vez.
+const PER_PROVIDER_KEYS = 'siged_provider_keys'; // { providerId: { apiKey, model } }
+
+// Mensajes de ayuda según el modo elegido.
+const HINTS = {
+  ia: 'Cada juicio se genera con la IA del proveedor seleccionado. Necesitás API key.',
+  banco: 'Solo se usan los juicios que pegaste abajo. NO necesitás API key. Asegurate de cubrir todas las notas posibles.',
+  mixto: 'Si la nota tiene juicios en el banco, se usa el banco; si no, se llama a la IA. Necesitás API key como respaldo.',
+};
 
 const $ = (id) => document.getElementById(id);
 
@@ -95,23 +102,39 @@ function refreshProviderHelp(providerId) {
   if (ak) ak.placeholder = p.apiKeyHint || 'API key';
 }
 
+function refreshModoHint() {
+  const modo = $('modoGeneracion').value;
+  const el = $('modoHint');
+  if (el) el.textContent = HINTS[modo] || '';
+}
+
 async function load() {
-  const cfg = await chrome.storage.local.get(DEFAULTS);
+  const stored = await chrome.storage.local.get(null);
+  const cfg = Object.assign({}, DEFAULTS, stored);
+
+  // Migración desde versiones anteriores que usaban dos checkboxes:
+  //   usarBanco=true,  bancoFallbackIA=true  → 'mixto'
+  //   usarBanco=true,  bancoFallbackIA=false → 'banco'
+  //   usarBanco=false                        → 'ia'
+  if (cfg.modoGeneracion == null && (typeof cfg.usarBanco !== 'undefined' || typeof cfg.bancoFallbackIA !== 'undefined')) {
+    if (cfg.usarBanco) cfg.modoGeneracion = cfg.bancoFallbackIA === false ? 'banco' : 'mixto';
+    else cfg.modoGeneracion = 'ia';
+  }
+  if (!['ia', 'banco', 'mixto'].includes(cfg.modoGeneracion)) cfg.modoGeneracion = DEFAULTS.modoGeneracion;
+
   populateProviders(cfg.provider || DEFAULTS.provider);
-  // Cargar key/modelo por proveedor si existen.
   const perProvider = (await chrome.storage.local.get(PER_PROVIDER_KEYS))[PER_PROVIDER_KEYS] || {};
   const providerId = $('provider').value;
   const remembered = perProvider[providerId] || {};
   populateModels(providerId, remembered.model || cfg.model);
   refreshProviderHelp(providerId);
 
-  // Carga de campos generales.
   for (const k of FIELDS) {
     if (k === 'apiKey' || k === 'model') continue;
     setFieldValue(k, cfg[k] ?? DEFAULTS[k]);
   }
-  // ApiKey: la del proveedor actual (no la global).
   setFieldValue('apiKey', remembered.apiKey || cfg.apiKey || '');
+  refreshModoHint();
 }
 
 function showStatus(msg, cls) {
@@ -144,10 +167,24 @@ async function save() {
   stored[providerId] = { apiKey: cfg.apiKey, model: cfg.model };
   await chrome.storage.local.set({ [PER_PROVIDER_KEYS]: stored });
 
-  showStatus(cfg.apiKey || cfg.usarBanco
-    ? `Configuración guardada ✓ (proveedor: ${SIGED_PROVIDERS[providerId].label})`
-    : 'Configuración guardada (falta API key o activá el banco).',
-    cfg.apiKey || cfg.usarBanco ? 'ok' : 'err');
+  // Validación según modo:
+  const modo = cfg.modoGeneracion || 'ia';
+  const necesitaIA = modo === 'ia' || modo === 'mixto';
+  const necesitaBanco = modo === 'banco' || modo === 'mixto';
+  const faltaIA = necesitaIA && !cfg.apiKey;
+  const faltaBanco = necesitaBanco && !(cfg.bancoJuicios || '').trim();
+  if (faltaIA && faltaBanco) {
+    showStatus('⚠ Configuración guardada, pero faltan API key y banco.', 'err');
+  } else if (faltaIA) {
+    showStatus(`⚠ Modo "${modo}": falta la API key del proveedor ${SIGED_PROVIDERS[providerId].label}.`, 'err');
+  } else if (faltaBanco) {
+    showStatus(`⚠ Modo "${modo}": el banco de juicios está vacío.`, 'err');
+  } else {
+    const desc = modo === 'ia' ? `IA (${SIGED_PROVIDERS[providerId].label})`
+      : modo === 'banco' ? 'Banco solamente (sin IA)'
+      : `Mixto (banco + ${SIGED_PROVIDERS[providerId].label} de respaldo)`;
+    showStatus(`Configuración guardada ✓ · ${desc}`, 'ok');
+  }
 }
 
 async function reset() {
@@ -162,7 +199,6 @@ document.addEventListener('DOMContentLoaded', async () => {
   $('save').addEventListener('click', save);
   $('reset').addEventListener('click', reset);
 
-  // Cuando cambia el proveedor, actualizamos modelos, ayuda y key recordada.
   $('provider').addEventListener('change', async () => {
     const providerId = $('provider').value;
     const stored = (await chrome.storage.local.get(PER_PROVIDER_KEYS))[PER_PROVIDER_KEYS] || {};
@@ -171,4 +207,6 @@ document.addEventListener('DOMContentLoaded', async () => {
     refreshProviderHelp(providerId);
     setFieldValue('apiKey', remembered.apiKey || '');
   });
+
+  $('modoGeneracion').addEventListener('change', refreshModoHint);
 });
