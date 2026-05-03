@@ -1,21 +1,26 @@
 {
   "manifest_version": 3,
-  "name": "SIGED · Juicios con IA (Claude)",
-  "description": "Genera juicios y promedios automáticos en la pantalla \"Cierre de promedios por alumno\" de SIGED usando la API de Claude.",
-  "version": "1.16.0",
+  "name": "SIGED · Juicios con IA (multi-proveedor)",
+  "description": "Genera juicios y promedios automáticos en SIGED usando múltiples proveedores de IA (Anthropic, OpenAI, Gemini, Groq, OpenRouter, Mistral, Cohere) o un banco propio de juicios.",
+  "version": "1.17.0",
   "permissions": ["storage"],
   "host_permissions": [
     "*://*.siged.com.uy/*",
-    "https://api.anthropic.com/*"
+    "https://api.anthropic.com/*",
+    "https://api.openai.com/*",
+    "https://generativelanguage.googleapis.com/*",
+    "https://api.groq.com/*",
+    "https://openrouter.ai/*",
+    "https://api.mistral.ai/*",
+    "https://api.cohere.com/*"
   ],
   "background": {
-    "service_worker": "background.js",
-    "type": "module"
+    "service_worker": "background.js"
   },
   "content_scripts": [
     {
       "matches": ["*://*.siged.com.uy/*"],
-      "js": ["content.js"],
+      "js": ["providers.js", "content.js"],
       "run_at": "document_idle",
       "all_frames": true
     }

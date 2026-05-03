@@ -6,6 +6,7 @@
   'use strict';
 
   const DEFAULTS = {
+    provider: 'anthropic',
     apiKey: '',
     model: 'claude-sonnet-4-5',
     maxChars: 280,
@@ -394,8 +395,11 @@
   }
 
   function callClaude(payload) {
+    // Compatibilidad: el nombre quedó "callClaude" pero ahora soporta cualquier
+    // proveedor configurado en CFG.provider. El background recibe el payload
+    // completo (provider + apiKey + model + system + userMsg + maxTokens).
     return new Promise((resolve, reject) => {
-      chrome.runtime.sendMessage({ type: 'callClaude', payload }, (res) => {
+      chrome.runtime.sendMessage({ type: 'callAi', payload }, (res) => {
         if (chrome.runtime.lastError) return reject(new Error(chrome.runtime.lastError.message));
         if (!res) return reject(new Error('Sin respuesta del background'));
         if (!res.ok) return reject(new Error(res.error || 'Error desconocido'));
@@ -510,6 +514,7 @@
         } else {
           // Camino IA (default).
           text = await callClaude({
+            provider: CFG.provider || 'anthropic',
             apiKey: CFG.apiKey,
             model: CFG.model,
             maxTokens: 1024,
@@ -1747,7 +1752,12 @@
       if (CFG.apiKey || CFG.usarBanco) {
         const partes = [];
         if (CFG.usarBanco) partes.push('Banco' + (CFG.bancoFallbackIA ? ' + IA respaldo' : ''));
-        else partes.push(`Modelo: ${CFG.model}`);
+        else {
+          const provLabel = (typeof SIGED_PROVIDERS !== 'undefined' && SIGED_PROVIDERS[CFG.provider])
+            ? SIGED_PROVIDERS[CFG.provider].label.split(' ')[0]
+            : (CFG.provider || 'IA');
+          partes.push(`${provLabel}: ${CFG.model}`);
+        }
         partes.push(`Máx ${CFG.maxChars} chars`, '3ra persona');
         if (CFG.compararConAnterior && !CFG.usarBanco) partes.push('+ contraste con período anterior');
         if (CFG.rendUsarRango && CFG.rendMin < CFG.rendMax) partes.push(`Rend ${CFG.rendMin}-${CFG.rendMax}`);
