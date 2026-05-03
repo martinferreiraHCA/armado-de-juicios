@@ -328,6 +328,33 @@
     return best;
   }
 
+  // Determina el modo a USAR realmente, considerando qué está configurado.
+  // Si el modo elegido por el docente no se puede ejecutar (falta API key
+  // o falta banco), bajamos al modo viable más cercano sin bloquear los
+  // botones. Devuelve { modo, ajustado, motivo }.
+  function efectivoModo() {
+    const tieneApi = !!CFG.apiKey;
+    const tieneBanco = !!(CFG.bancoJuicios || '').trim();
+    const elegido = CFG.modoGeneracion || 'ia';
+    if (elegido === 'ia') {
+      if (tieneApi) return { modo: 'ia', ajustado: false };
+      if (tieneBanco) return { modo: 'banco', ajustado: true, motivo: 'sin API key' };
+      return { modo: 'ia', ajustado: false }; // se bloqueará después con mensaje
+    }
+    if (elegido === 'banco') {
+      if (tieneBanco) return { modo: 'banco', ajustado: false };
+      if (tieneApi) return { modo: 'ia', ajustado: true, motivo: 'banco vacío' };
+      return { modo: 'banco', ajustado: false };
+    }
+    if (elegido === 'mixto') {
+      if (tieneBanco && tieneApi) return { modo: 'mixto', ajustado: false };
+      if (tieneBanco) return { modo: 'banco', ajustado: true, motivo: 'sin API key, uso solo banco' };
+      if (tieneApi) return { modo: 'ia', ajustado: true, motivo: 'banco vacío, uso solo IA' };
+      return { modo: 'mixto', ajustado: false };
+    }
+    return { modo: 'ia', ajustado: false };
+  }
+
   function aplicarAdendumPlataforma(juicio, hayAusencias, addendum) {
     if (!hayAusencias || !addendum || !addendum.trim()) return juicio;
     const lower = (juicio || '').toLowerCase();
@@ -503,7 +530,8 @@
       const notaParaBanco = rendNota != null ? Math.round(rendNota)
         : (promedioFinal != null ? Math.round(promedioFinal) : null);
 
-      const modo = CFG.modoGeneracion || 'ia';
+      const efectivo = efectivoModo();
+      const modo = efectivo.modo;
       let text = '';
       let viaBanco = false;
       // Banco si el modo es 'banco' o 'mixto'.
@@ -1756,13 +1784,14 @@
 
     const refreshStatus = () => {
       const s = panel.querySelector('[data-fld="cfg-status"]');
-      const modo = CFG.modoGeneracion || 'ia';
+      const efectivo = efectivoModo();
+      const modo = efectivo.modo;
       const provLabel = (typeof SIGED_PROVIDERS !== 'undefined' && SIGED_PROVIDERS[CFG.provider])
         ? SIGED_PROVIDERS[CFG.provider].label.split(' ')[0]
         : (CFG.provider || 'IA');
       const tieneBanco = !!(CFG.bancoJuicios || '').trim();
       const listoIA = !!CFG.apiKey;
-      const listo = (modo === 'ia' && listoIA) || (modo === 'banco' && tieneBanco) || (modo === 'mixto' && (listoIA || tieneBanco));
+      const listo = (modo === 'ia' && listoIA) || (modo === 'banco' && tieneBanco) || (modo === 'mixto' && listoIA && tieneBanco);
       if (listo) {
         const partes = [];
         if (modo === 'banco') partes.push('🗂 Banco');
@@ -1771,12 +1800,10 @@
         partes.push(`Máx ${CFG.maxChars} chars`, '3ra persona');
         if (CFG.compararConAnterior && modo !== 'banco') partes.push('+ contraste con período anterior');
         if (CFG.rendUsarRango && CFG.rendMin < CFG.rendMax) partes.push(`Rend ${CFG.rendMin}-${CFG.rendMax}`);
+        if (efectivo.ajustado) partes.push(`(modo ajustado: ${efectivo.motivo})`);
         s.textContent = partes.join(' · ');
       } else {
-        const falta = modo === 'banco' ? 'el banco de juicios está vacío'
-          : modo === 'mixto' ? 'falta API key y/o banco de juicios'
-          : 'falta API key';
-        s.innerHTML = `⚠ Modo ${modo}: ${falta}. Abrí el ícono de la extensión.`;
+        s.innerHTML = '⚠ Falta API key o banco de juicios. Configurá al menos uno desde el ícono de la extensión.';
       }
     };
 
@@ -1831,19 +1858,14 @@
       if (act === 'run' || act === 'run-all') {
         await loadConfig();
         refreshStatus();
-        const modoActivo = CFG.modoGeneracion || 'ia';
         const tieneBancoActivo = !!(CFG.bancoJuicios || '').trim();
-        if (modoActivo === 'banco' && !tieneBancoActivo) {
-          log('Modo "banco" pero el banco está vacío. Pegá los juicios en el ícono de la extensión.');
+        if (!CFG.apiKey && !tieneBancoActivo) {
+          log('No hay ni API key ni banco de juicios. Configurá al menos uno desde el ícono de la extensión y volvé a intentar.');
           return;
         }
-        if (modoActivo === 'ia' && !CFG.apiKey) {
-          log('Modo "IA" pero falta API key. Configurala desde el ícono de la extensión.');
-          return;
-        }
-        if (modoActivo === 'mixto' && !CFG.apiKey && !tieneBancoActivo) {
-          log('Modo "mixto" pero falta API key y banco. Configurá al menos uno.');
-          return;
+        const ef = efectivoModo();
+        if (ef.ajustado) {
+          log(`ℹ Modo ajustado automáticamente a "${ef.modo}" (${ef.motivo}).`);
         }
 
         if (act === 'run-all') {
