@@ -20,25 +20,48 @@ del grupo.
 4. **Cargar descomprimida** → seleccioná la carpeta del repo.
 5. La extensión queda activa solo en `https://*.siged.com.uy/*`.
 
-## Configuración inicial
+## Configuración
 
-1. Click en el ícono de la extensión.
-2. Pegá tu **API key de Claude** (`sk-ant-...`). Se guarda con
-   `chrome.storage.local`, queda solo en tu navegador.
-3. Elegí **modelo**:
-   - `claude-sonnet-4-5` (recomendado).
-   - `claude-opus-4-7` (mejor calidad, más caro).
-   - `claude-haiku-4-5-20251001` (más rápido y barato).
-4. **Máx. chars**: largo máximo del juicio. Default `280` (≈1-2 oraciones).
-5. **Tono / instrucciones**: el default fija explícitamente
-   **3ra persona**. Podés agregar matices ("nivel inicial", "secundaria",
-   etc.) sin sacar la regla.
-6. **Guardar configuración**.
+Click en el ícono de la extensión → **⚙️ Abrir configuración completa**.
+Se abre una página de opciones a pantalla completa con pestañas:
 
-### Cómo conseguir la API key
+- **🎛️ Modo de generación** — cómo se redactan los juicios:
+  - **📝 Plantillas (sin IA)**: redacción natural armada con tus propias
+    frases y las actividades del período. Gratis, sin API key.
+  - **🗂️ Banco de juicios**: juicios ya escritos por vos, uno por nota.
+    Gratis, sin API key.
+  - **🤖 Solo IA**: cada juicio lo redacta el proveedor elegido
+    (necesita API key).
+  - **🔀 Mixto**: banco si la nota está, IA como respaldo.
+- **📝 Generador de plantillas** — actividades del período + frases por
+  banda de nota con sintaxis configurable. Placeholders: `{actividad}`
+  (una actividad, rota entre alumnos), `{actividades}` (todas enumeradas
+  como «X, Y y Z»), `{conector}` (rota entre conectores) y `{nota}`.
+  Botón «Ver ejemplos generados» para previsualizar.
+- **🗂️ Banco de juicios** — con chips de cobertura por nota (verde = tiene
+  variantes, rojo = falta).
+- **✨ Asistente de prompts (sin API)** — genera un prompt listo para pegar
+  en cualquier IA gratuita (ChatGPT, Gemini, Claude web…) que produce el
+  banco completo, la rúbrica o las frases de plantillas; pegás la respuesta
+  de vuelta y se carga sola en la configuración. Sin API key ni costos.
+- **📊 Rúbrica** — qué significa cada rango de notas (instrucción
+  obligatoria para el modo IA).
+- **🎨 Estilo y Rend.** — tono, largo máximo, contraste con períodos
+  anteriores y prorrateo del Rend.
+- **🤖 Proveedor de IA** — proveedor, modelo y API key (solo para los
+  modos IA y Mixto). La key se guarda con `chrome.storage.local` y se
+  recuerda por proveedor.
+- **💾 Mis bases** — guardá la configuración actual con un nombre (por
+  asignatura, grupo o período), cargala cuando quieras, y exportá/importá
+  todo a un archivo JSON para respaldar o compartir con colegas (las API
+  keys nunca se exportan).
 
-1. https://console.anthropic.com → **Settings → API Keys → Create Key**.
-2. Copiala (empieza con `sk-ant-...`). Necesitás créditos / billing activos.
+### Cómo conseguir la API key (solo modos IA / Mixto)
+
+1. Entrá al sitio del proveedor (el link «¿Cómo obtenerla?» de la pestaña
+   Proveedor te lleva directo). Varios tienen plan gratuito (Gemini, Groq,
+   OpenRouter…).
+2. Creá una key y pegala en la pestaña **Proveedor de IA**.
 
 ## Uso en SIGED
 
@@ -105,10 +128,13 @@ de un resumen calculado localmente con los conteos del período:
 
 ```
 manifest.json   – MV3, permisos y matches
-background.js   – service worker, llamada a la API de Claude
-content.js      – panel flotante + lógica de extracción + relleno + auto-loop
-popup.html      – UI de configuración (ícono de la extensión)
-popup.js        – guarda/lee chrome.storage.local
+background.js   – service worker, llamada a la API del proveedor de IA
+providers.js    – definiciones de proveedores de IA (compartido)
+content.js      – panel flotante + extracción + relleno + auto-loop +
+                  generador por plantillas y banco (modos sin IA)
+popup.html/js   – popup del ícono: estado rápido + acceso a la configuración
+options.html/js – página de configuración completa (pestañas, asistente de
+                  prompts, bases guardadas, export/import)
 ```
 
 ## Limitaciones conocidas

@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "SIGED · Juicios con IA (multi-proveedor)",
   "description": "Genera juicios y promedios automáticos en SIGED usando múltiples proveedores de IA (Anthropic, OpenAI, Gemini, Groq, OpenRouter, Mistral, Cohere) o un banco propio de juicios.",
-  "version": "1.18.0",
+  "version": "1.19.0",
   "permissions": ["storage"],
   "host_permissions": [
     "*://*.siged.com.uy/*",
@@ -25,6 +25,10 @@
       "all_frames": true
     }
   ],
+  "options_ui": {
+    "page": "options.html",
+    "open_in_tab": true
+  },
   "action": {
     "default_title": "SIGED · Juicios IA",
     "default_popup": "popup.html"

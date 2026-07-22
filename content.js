@@ -15,9 +15,22 @@
     rendUsarRango: false,
     rendMin: 4,
     rendMax: 7,
-    modoGeneracion: 'ia', // 'ia' | 'banco' | 'mixto'
+    modoGeneracion: 'ia', // 'ia' | 'banco' | 'plantilla' | 'mixto'
     bancoJuicios: '',
     bancoPlataformaAddendum: 'No debe descuidar las entregas en plataforma.',
+    // Generador por plantillas (sin IA): actividades del período + frases con
+    // sintaxis configurable por banda de nota. Placeholders soportados:
+    //   {actividad}   → una actividad de la lista (rota entre ellas)
+    //   {actividades} → todas las actividades enumeradas ("X, Y y Z")
+    //   {conector}    → un conector de la lista (rota entre ellos)
+    //   {nota}        → la nota redondeada
+    plantillaActividades: '',
+    plantillaConectores: 'Asimismo\nAdemás\nPor otra parte\nA su vez',
+    plantilla1: 'No presentó evidencias de trabajo en {actividades}. Se espera que regularice las entregas pendientes.\nTiene pendiente la entrega de {actividad}. Es importante que retome el trabajo para poder valorar sus aprendizajes.',
+    plantilla24: 'Participó de {actividades}, aunque sus producciones aún no alcanzan lo esperado. Con mayor dedicación puede mejorar la calidad de sus trabajos.\nRealizó {actividad} con dificultades. {conector}, se observa margen para fortalecer la comprensión de los contenidos trabajados.',
+    plantilla56: 'Realizó {actividades} cumpliendo con lo solicitado. {conector}, puede animarse a profundizar sus producciones.\nAlcanzó un desempeño satisfactorio en {actividad}, cumpliendo con las consignas planteadas.',
+    plantilla78: 'Muy buen desempeño en {actividades}. Demuestra compromiso y comprensión de los contenidos trabajados.\nRealizó {actividad} con muy buen nivel. {conector}, se destaca su constancia en las propuestas del período.',
+    plantilla910: 'Se destaca por la excelente calidad de sus producciones en {actividades}. Demuestra dominio de los contenidos y gran compromiso.\nTrabajo destacado en {actividad}. Sus producciones reflejan dedicación, creatividad y comprensión profunda.',
     rubrica1: 'No entregó el trabajo o no presentó evidencia (ausencia de producción). Mencionar como entrega pendiente cuando corresponda.',
     rubrica24: 'Producciones insuficientes (notas menores a 5). Reconocer las dificultades pero adoptar tono CONSTRUCTIVO y POSITIVO: subrayar el margen de mejora y los aspectos puntuales a fortalecer; evitar etiquetas desmoralizantes.',
     rubrica56: 'Trabajo satisfactorio: cumple con lo solicitado.',
@@ -35,7 +48,7 @@
     const stored = await chrome.storage.local.get(null);
     CFG = { ...DEFAULTS, ...stored };
     // Migración: usarBanco/bancoFallbackIA → modoGeneracion.
-    if (!['ia', 'banco', 'mixto'].includes(CFG.modoGeneracion)) {
+    if (!['ia', 'banco', 'plantilla', 'mixto'].includes(CFG.modoGeneracion)) {
       if (stored.usarBanco) CFG.modoGeneracion = stored.bancoFallbackIA === false ? 'banco' : 'mixto';
       else CFG.modoGeneracion = 'ia';
     }
@@ -328,6 +341,62 @@
     return best;
   }
 
+  // ---------------------------------------------------------------------------
+  // Generador por plantillas (modo 'plantilla', sin IA): compone el juicio con
+  // frases configurables por banda de nota + las actividades del período.
+  // ---------------------------------------------------------------------------
+  function parseLineas(text) {
+    return String(text || '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+  }
+
+  function bandaDePlantilla(nota) {
+    if (nota == null) return null;
+    const n = Math.round(nota);
+    if (n <= 1) return 'plantilla1';
+    if (n < 5) return 'plantilla24';
+    if (n < 7) return 'plantilla56';
+    if (n < 9) return 'plantilla78';
+    return 'plantilla910';
+  }
+
+  // "X, Y y Z" — enumeración natural en español.
+  function listaNatural(items) {
+    if (!items.length) return '';
+    if (items.length === 1) return items[0];
+    return items.slice(0, -1).join(', ') + ' y ' + items[items.length - 1];
+  }
+
+  // Rotación: por banda llevamos el índice de plantilla, actividad y conector
+  // para que juicios consecutivos no queden idénticos (variedad natural).
+  const plantillaSeq = { tpl: new Map(), act: 0, con: 0 };
+  function generarJuicioPlantilla(nota, cfg) {
+    const banda = bandaDePlantilla(nota);
+    if (!banda) return null;
+    const templates = parseLineas(cfg[banda]);
+    if (!templates.length) return null;
+    const idx = plantillaSeq.tpl.get(banda) || 0;
+    plantillaSeq.tpl.set(banda, idx + 1);
+    let text = templates[idx % templates.length];
+
+    const actividades = parseLineas(cfg.plantillaActividades);
+    const conectores = parseLineas(cfg.plantillaConectores);
+    const fallbackActs = 'las actividades propuestas en el período';
+    text = text.replace(/\{actividades\}/gi, () => actividades.length ? listaNatural(actividades) : fallbackActs);
+    text = text.replace(/\{actividad\}/gi, () => {
+      if (!actividades.length) return fallbackActs;
+      return actividades[(plantillaSeq.act++) % actividades.length];
+    });
+    text = text.replace(/\{conector\}/gi, () => {
+      if (!conectores.length) return 'Además';
+      return conectores[(plantillaSeq.con++) % conectores.length];
+    });
+    text = text.replace(/\{nota\}/gi, String(Math.round(nota)));
+    // Limpieza: espacios dobles y mayúscula inicial.
+    text = text.replace(/\s{2,}/g, ' ').trim();
+    if (text) text = text[0].toUpperCase() + text.slice(1);
+    return text || null;
+  }
+
   function aplicarAdendumPlataforma(juicio, hayAusencias, addendum) {
     if (!hayAusencias || !addendum || !addendum.trim()) return juicio;
     const lower = (juicio || '').toLowerCase();
@@ -506,6 +575,7 @@
       const modo = CFG.modoGeneracion || 'ia';
       let text = '';
       let viaBanco = false;
+      let viaPlantilla = false;
       // Banco si el modo es 'banco' o 'mixto'.
       if (modo === 'banco' || modo === 'mixto') {
         const bank = parseBancoJuicios(CFG.bancoJuicios || '');
@@ -515,9 +585,20 @@
           viaBanco = true;
         }
       }
+      // Plantillas: solo en modo 'plantilla' (en 'mixto' el respaldo sigue
+      // siendo la IA, como antes).
+      if (!text && modo === 'plantilla') {
+        const generado = generarJuicioPlantilla(notaParaBanco, CFG);
+        if (generado) {
+          text = aplicarAdendumPlataforma(generado, hayAusencias, CFG.bancoPlataformaAddendum);
+          viaPlantilla = true;
+        }
+      }
       if (!text) {
         if (modo === 'banco') {
           text = `(sin juicio en el banco para nota ${notaParaBanco != null ? notaParaBanco : '?'})`;
+        } else if (modo === 'plantilla') {
+          text = `(sin plantilla para nota ${notaParaBanco != null ? notaParaBanco : '?'})`;
         } else {
           // Camino IA: 'ia' siempre, 'mixto' como respaldo.
           text = await callClaude({
@@ -544,7 +625,7 @@
       setNativeValue(row.juicio, recortado);
       fireGxChange(row.juicio);
       juicioCompletado = recortado;
-      debugViz.mark(row.juicio, debugViz.colors.filled, `✓ Juicio (${recortado.length}c, ${viaBanco ? 'banco' : 'IA'})`);
+      debugViz.mark(row.juicio, debugViz.colors.filled, `✓ Juicio (${recortado.length}c, ${viaBanco ? 'banco' : viaPlantilla ? 'plantilla' : 'IA'})`);
     }
 
     const partes = [];
@@ -1761,19 +1842,26 @@
         ? SIGED_PROVIDERS[CFG.provider].label.split(' ')[0]
         : (CFG.provider || 'IA');
       const tieneBanco = !!(CFG.bancoJuicios || '').trim();
+      const tienePlantillas = ['plantilla1', 'plantilla24', 'plantilla56', 'plantilla78', 'plantilla910']
+        .some((k) => !!(CFG[k] || '').trim());
       const listoIA = !!CFG.apiKey;
-      const listo = (modo === 'ia' && listoIA) || (modo === 'banco' && tieneBanco) || (modo === 'mixto' && (listoIA || tieneBanco));
+      const listo = (modo === 'ia' && listoIA)
+        || (modo === 'banco' && tieneBanco)
+        || (modo === 'plantilla' && tienePlantillas)
+        || (modo === 'mixto' && (listoIA || tieneBanco));
       if (listo) {
         const partes = [];
         if (modo === 'banco') partes.push('🗂 Banco');
+        else if (modo === 'plantilla') partes.push('📝 Plantillas (sin IA)');
         else if (modo === 'mixto') partes.push(`🗂 Banco + 🤖 ${provLabel}`);
         else partes.push(`🤖 ${provLabel}: ${CFG.model}`);
         partes.push(`Máx ${CFG.maxChars} chars`, '3ra persona');
-        if (CFG.compararConAnterior && modo !== 'banco') partes.push('+ contraste con período anterior');
+        if (CFG.compararConAnterior && (modo === 'ia' || modo === 'mixto')) partes.push('+ contraste con período anterior');
         if (CFG.rendUsarRango && CFG.rendMin < CFG.rendMax) partes.push(`Rend ${CFG.rendMin}-${CFG.rendMax}`);
         s.textContent = partes.join(' · ');
       } else {
         const falta = modo === 'banco' ? 'el banco de juicios está vacío'
+          : modo === 'plantilla' ? 'no hay plantillas configuradas'
           : modo === 'mixto' ? 'falta API key y/o banco de juicios'
           : 'falta API key';
         s.innerHTML = `⚠ Modo ${modo}: ${falta}. Abrí el ícono de la extensión.`;
@@ -1835,6 +1923,12 @@
         const tieneBancoActivo = !!(CFG.bancoJuicios || '').trim();
         if (modoActivo === 'banco' && !tieneBancoActivo) {
           log('Modo "banco" pero el banco está vacío. Pegá los juicios en el ícono de la extensión.');
+          return;
+        }
+        const tienePlantillasActivo = ['plantilla1', 'plantilla24', 'plantilla56', 'plantilla78', 'plantilla910']
+          .some((k) => !!(CFG[k] || '').trim());
+        if (modoActivo === 'plantilla' && !tienePlantillasActivo) {
+          log('Modo "plantillas" pero no hay plantillas configuradas. Abrí la configuración de la extensión.');
           return;
         }
         if (modoActivo === 'ia' && !CFG.apiKey) {
