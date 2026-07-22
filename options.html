@@ -1,0 +1,369 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <title>SIGED · Juicios IA — Configuración</title>
+  <style>
+    :root{
+      --bg:#0f172a; --bg2:#1e293b; --card:#1e293b; --card2:#273449;
+      --border:#334155; --text:#f1f5f9; --muted:#94a3b8; --accent:#3b82f6;
+      --accent2:#60a5fa; --ok:#34d399; --err:#f87171; --warn:#fbbf24;
+    }
+    *{box-sizing:border-box}
+    body{margin:0;font:14px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif;background:var(--bg);color:var(--text)}
+    a{color:var(--accent2)}
+    .layout{display:grid;grid-template-columns:230px 1fr;max-width:1100px;margin:0 auto;min-height:100vh}
+    /* ---------- Sidebar ---------- */
+    aside{border-right:1px solid var(--border);padding:20px 14px;position:sticky;top:0;height:100vh;overflow:auto}
+    aside .logo{font-size:16px;font-weight:700;margin-bottom:2px}
+    aside .logo small{display:block;font-weight:400;color:var(--muted);font-size:11px;margin-top:2px}
+    nav{margin-top:18px;display:flex;flex-direction:column;gap:2px}
+    nav button{all:unset;cursor:pointer;padding:9px 12px;border-radius:8px;color:var(--muted);font-size:13px;display:flex;gap:8px;align-items:center}
+    nav button:hover{background:var(--bg2);color:var(--text)}
+    nav button.active{background:var(--accent);color:#fff;font-weight:600}
+    aside .save-zone{margin-top:22px;padding-top:16px;border-top:1px solid var(--border)}
+    /* ---------- Main ---------- */
+    main{padding:26px 32px 60px;min-width:0}
+    section.tab{display:none}
+    section.tab.visible{display:block}
+    h1{font-size:20px;margin:0 0 4px}
+    .subtitle{color:var(--muted);margin:0 0 22px;font-size:13px}
+    .card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:18px 20px;margin-bottom:16px}
+    .card h2{margin:0 0 4px;font-size:15px}
+    .card .desc{color:var(--muted);font-size:12.5px;margin:0 0 14px}
+    label{display:flex;flex-direction:column;gap:5px;margin-bottom:12px;font-size:12px;color:var(--muted);font-weight:600}
+    label .lbl-hint{font-weight:400;font-size:11px}
+    label.check{flex-direction:row;align-items:center;gap:8px;color:var(--text);font-weight:400;font-size:13px}
+    label.check input{width:auto;margin:0;accent-color:var(--accent)}
+    input[type=text],input[type=password],input[type=number],select,textarea{
+      background:#0f1a2e;color:var(--text);border:1px solid var(--border);border-radius:8px;
+      padding:9px 11px;font:inherit;font-size:13px;width:100%;
+    }
+    input:focus,select:focus,textarea:focus{outline:2px solid var(--accent);outline-offset:-1px;border-color:transparent}
+    textarea{resize:vertical}
+    .row{display:flex;gap:12px;flex-wrap:wrap}
+    .row>label{flex:1;min-width:140px}
+    .btn{background:var(--accent);color:#fff;border:0;padding:10px 16px;border-radius:8px;cursor:pointer;font:inherit;font-weight:600;font-size:13px}
+    .btn:hover{background:#2563eb}
+    .btn.secondary{background:var(--card2);color:var(--text);border:1px solid var(--border)}
+    .btn.secondary:hover{background:#324158}
+    .btn.danger{background:transparent;color:var(--err);border:1px solid var(--err)}
+    .btn.small{padding:6px 10px;font-size:12px}
+    .btn.block{width:100%}
+    /* ---------- Cards de modo ---------- */
+    .mode-grid{display:grid;grid-template-columns:repeat(auto-fit,minmax(200px,1fr));gap:12px}
+    .mode-card{position:relative;border:1px solid var(--border);border-radius:12px;padding:14px;cursor:pointer;background:var(--bg);display:block}
+    .mode-card:hover{border-color:var(--accent2)}
+    .mode-card input{position:absolute;opacity:0}
+    .mode-card .icon{display:block;font-size:22px}
+    .mode-card .name{display:block;font-weight:700;margin:6px 0 4px;font-size:13.5px;color:var(--text)}
+    .mode-card .mdesc{display:block;font-size:11.5px;color:var(--muted);line-height:1.45;font-weight:400}
+    .mode-card .tag{display:inline-block;margin-top:8px;font-size:10px;padding:2px 8px;border-radius:99px;background:var(--card2);color:var(--muted)}
+    .mode-card .tag.free{background:#064e3b;color:var(--ok)}
+    .mode-card:has(input:checked){border-color:var(--accent);outline:2px solid var(--accent);outline-offset:-1px;background:var(--bg2)}
+    /* ---------- chips / preview ---------- */
+    .chips{display:flex;gap:6px;flex-wrap:wrap;margin-top:8px}
+    .chip{font-size:11px;padding:3px 9px;border-radius:99px;background:var(--card2);color:var(--muted)}
+    .chip.ok{background:#064e3b;color:var(--ok)}
+    .chip.miss{background:#4c1d1d;color:var(--err)}
+    .preview{background:#0f1a2e;border:1px dashed var(--border);border-radius:8px;padding:12px 14px;font-size:12.5px;margin-top:10px}
+    .preview .pv-item{margin-bottom:8px}
+    .preview .pv-item:last-child{margin-bottom:0}
+    .preview .pv-nota{color:var(--accent2);font-weight:700;margin-right:6px}
+    .hint{font-size:12px;color:var(--muted);margin-top:8px}
+    .status{margin-top:10px;font-size:12.5px;min-height:18px}
+    .status.ok{color:var(--ok)} .status.err{color:var(--err)}
+    code{background:var(--card2);padding:1px 6px;border-radius:5px;font-size:11.5px}
+    /* ---------- bases ---------- */
+    .base-item{display:flex;align-items:center;gap:10px;padding:10px 12px;border:1px solid var(--border);border-radius:8px;margin-bottom:8px;background:var(--bg)}
+    .base-item .bname{font-weight:600;flex:1}
+    .base-item .bmeta{font-size:11px;color:var(--muted)}
+    .toolbar{display:flex;gap:8px;flex-wrap:wrap;margin-top:4px}
+    @media(max-width:760px){
+      .layout{grid-template-columns:1fr}
+      aside{position:static;height:auto;border-right:0;border-bottom:1px solid var(--border)}
+      nav{flex-direction:row;flex-wrap:wrap}
+    }
+  </style>
+</head>
+<body>
+<div class="layout">
+  <aside>
+    <div class="logo">SIGED · Juicios IA
+      <small>Configuración de la extensión</small>
+    </div>
+    <nav id="nav">
+      <button data-tab="modo" class="active">🎛️ Modo de generación</button>
+      <button data-tab="plantillas">📝 Generador de plantillas</button>
+      <button data-tab="banco">🗂️ Banco de juicios</button>
+      <button data-tab="asistente">✨ Asistente de prompts</button>
+      <button data-tab="rubrica">📊 Rúbrica</button>
+      <button data-tab="estilo">🎨 Estilo y Rend.</button>
+      <button data-tab="proveedor">🤖 Proveedor de IA</button>
+      <button data-tab="bases">💾 Mis bases</button>
+    </nav>
+    <div class="save-zone">
+      <button class="btn block" id="save">Guardar configuración</button>
+      <button class="btn secondary block small" id="reset" style="margin-top:8px">Restaurar defaults</button>
+      <div class="status" id="status"></div>
+    </div>
+  </aside>
+
+  <main>
+    <!-- ============ MODO ============ -->
+    <section class="tab visible" data-tab="modo">
+      <h1>Modo de generación</h1>
+      <p class="subtitle">Elegí cómo se redactan los juicios cuando apretás «Generar» en SIGED.</p>
+      <div class="mode-grid">
+        <label class="mode-card">
+          <input type="radio" name="modoGeneracion" value="plantilla">
+          <span class="icon">📝</span>
+          <span class="name">Plantillas (sin IA)</span>
+          <span class="mdesc">Redacción natural armada con tus propias frases y las actividades del período. Variedad automática entre alumnos.</span>
+          <span class="tag free">Sin API · gratis</span>
+        </label>
+        <label class="mode-card">
+          <input type="radio" name="modoGeneracion" value="banco">
+          <span class="icon">🗂️</span>
+          <span class="name">Banco de juicios</span>
+          <span class="mdesc">Usa juicios ya escritos por vos, uno por nota. Rota entre variantes para no repetir.</span>
+          <span class="tag free">Sin API · gratis</span>
+        </label>
+        <label class="mode-card">
+          <input type="radio" name="modoGeneracion" value="ia">
+          <span class="icon">🤖</span>
+          <span class="name">Solo IA</span>
+          <span class="mdesc">Cada juicio lo redacta la IA del proveedor elegido, leyendo las notas del alumno.</span>
+          <span class="tag">Necesita API key</span>
+        </label>
+        <label class="mode-card">
+          <input type="radio" name="modoGeneracion" value="mixto">
+          <span class="icon">🔀</span>
+          <span class="name">Mixto</span>
+          <span class="mdesc">Si la nota está en el banco usa el banco; si no, llama a la IA como respaldo.</span>
+          <span class="tag">Necesita API key</span>
+        </label>
+      </div>
+      <p class="hint" id="modoHint"></p>
+    </section>
+
+    <!-- ============ PLANTILLAS ============ -->
+    <section class="tab" data-tab="plantillas">
+      <h1>Generador de plantillas</h1>
+      <p class="subtitle">Juicios naturales sin IA: escribís frases con sintaxis configurable y la extensión las combina con las actividades que realizaron. Placeholders: <code>{actividad}</code> (una actividad, rota), <code>{actividades}</code> (todas, «X, Y y Z»), <code>{conector}</code> (rota entre conectores), <code>{nota}</code>.</p>
+
+      <div class="card">
+        <h2>Actividades realizadas en el período</h2>
+        <p class="desc">Una por línea, escritas como las nombrarías dentro de una oración (ej: «la maqueta del sistema solar», «las evaluaciones escritas»). Actualizalas cada período.</p>
+        <textarea id="plantillaActividades" rows="4" placeholder="la maqueta del sistema solar&#10;las evaluaciones escritas&#10;el trabajo en equipo sobre energías renovables"></textarea>
+        <label style="margin-top:12px">Conectores <span class="lbl-hint">(uno por línea, para {conector})</span>
+          <textarea id="plantillaConectores" rows="4"></textarea>
+        </label>
+      </div>
+
+      <div class="card">
+        <h2>Frases por banda de nota</h2>
+        <p class="desc">Una o más frases por banda (una por línea). La extensión rota entre ellas para que los juicios no queden idénticos.</p>
+        <label>Nota 1 · ausencia / no entrega
+          <textarea id="plantilla1" rows="3"></textarea>
+        </label>
+        <label>Notas 2 a 4 · a mejorar (tono constructivo)
+          <textarea id="plantilla24" rows="3"></textarea>
+        </label>
+        <label>Notas 5 a 6 · satisfactorio
+          <textarea id="plantilla56" rows="3"></textarea>
+        </label>
+        <label>Notas 7 a 8 · muy bueno
+          <textarea id="plantilla78" rows="3"></textarea>
+        </label>
+        <label>Notas 9 a 10 · destacado
+          <textarea id="plantilla910" rows="3"></textarea>
+        </label>
+        <button class="btn secondary" id="previewPlantillas">👀 Ver ejemplos generados</button>
+        <div class="preview" id="plantillaPreview" hidden></div>
+      </div>
+    </section>
+
+    <!-- ============ BANCO ============ -->
+    <section class="tab" data-tab="banco">
+      <h1>Banco de juicios</h1>
+      <p class="subtitle">Juicios ya escritos, elegidos según la nota redondeada del alumno. Formato: una línea <code>Nota N</code> seguida de uno o más juicios (uno por línea).</p>
+      <div class="card">
+        <label>Juicios por nota
+          <textarea id="bancoJuicios" rows="14" placeholder="Nota 4&#10;Reconoce aspectos básicos de los temas trabajados…&#10;Explora los contenidos con apoyo docente…&#10;&#10;Nota 5&#10;Comprende los aspectos iniciales de la propuesta…"></textarea>
+        </label>
+        <div class="chips" id="bancoCoverage"></div>
+        <p class="hint">💡 ¿No querés escribirlos a mano? Usá el <b>✨ Asistente de prompts</b> para que una IA gratuita te genere el banco completo y pegalo acá.</p>
+      </div>
+      <div class="card">
+        <h2>Adendum de entregas pendientes</h2>
+        <p class="desc">Se agrega al final del juicio solo cuando el alumno tiene notas 1 (ausencias) y el juicio no las menciona. Vale para banco y plantillas.</p>
+        <input type="text" id="bancoPlataformaAddendum">
+      </div>
+    </section>
+
+    <!-- ============ ASISTENTE ============ -->
+    <section class="tab" data-tab="asistente">
+      <h1>Asistente de prompts (sin API)</h1>
+      <p class="subtitle">Genera un prompt listo para pegar en cualquier IA gratuita (ChatGPT, Gemini, Claude, Copilot…). Copiás el prompt, pegás la respuesta de vuelta acá, y se carga en tu configuración. Sin API key ni costos.</p>
+
+      <div class="card">
+        <h2>1 · Armá el prompt</h2>
+        <div class="row">
+          <label>¿Qué querés generar?
+            <select id="promptTipo">
+              <option value="banco">Banco de juicios completo (notas 1 a 10)</option>
+              <option value="rubrica">Descripciones de la rúbrica (5 bandas)</option>
+              <option value="plantillas">Frases para el generador de plantillas</option>
+            </select>
+          </label>
+          <label>Variantes por nota
+            <input type="number" id="promptVariantes" min="1" max="10" value="3">
+          </label>
+        </div>
+        <div class="row">
+          <label>Asignatura
+            <input type="text" id="promptAsignatura" placeholder="Ciencias Físicas">
+          </label>
+          <label>Nivel / grupo
+            <input type="text" id="promptNivel" placeholder="2° año de ciclo básico">
+          </label>
+        </div>
+        <label>Actividades del período <span class="lbl-hint">(opcional, una por línea — le da contexto a la IA)</span>
+          <textarea id="promptActividades" rows="3"></textarea>
+        </label>
+        <button class="btn" id="generarPrompt">Generar prompt</button>
+        <label style="margin-top:14px">Prompt generado
+          <textarea id="promptResultado" rows="10" readonly placeholder="Apretá «Generar prompt» y después copialo…"></textarea>
+        </label>
+        <div class="toolbar">
+          <button class="btn secondary" id="copiarPrompt">📋 Copiar prompt</button>
+        </div>
+        <div class="status" id="promptStatus"></div>
+      </div>
+
+      <div class="card">
+        <h2>2 · Pegá la respuesta de la IA</h2>
+        <p class="desc">Pegá acá lo que te devolvió la IA. La extensión lo valida y lo carga donde corresponda según el tipo elegido arriba.</p>
+        <textarea id="respuestaIA" rows="8" placeholder="Nota 1&#10;No presentó evidencias…"></textarea>
+        <div class="toolbar">
+          <button class="btn" id="aplicarRespuesta">Aplicar a mi configuración</button>
+        </div>
+        <div class="status" id="respuestaStatus"></div>
+      </div>
+    </section>
+
+    <!-- ============ RÚBRICA ============ -->
+    <section class="tab" data-tab="rubrica">
+      <h1>Rúbrica</h1>
+      <p class="subtitle">Qué significa cada rango de notas. Se usa como instrucción obligatoria cuando el juicio lo genera la IA.</p>
+      <div class="card">
+        <label>Nota 1 · ausencia / no entrega
+          <textarea id="rubrica1" rows="2"></textarea>
+        </label>
+        <label>Notas 2 a 4 · insuficiente
+          <textarea id="rubrica24" rows="2"></textarea>
+        </label>
+        <label>Notas 5 a 6 · satisfactorio
+          <textarea id="rubrica56" rows="2"></textarea>
+        </label>
+        <label>Notas 7 a 8 · muy bueno
+          <textarea id="rubrica78" rows="2"></textarea>
+        </label>
+        <label>Notas 9 a 10 · destacado
+          <textarea id="rubrica910" rows="2"></textarea>
+        </label>
+        <p class="hint">💡 También podés pedirle las descripciones a una IA gratuita desde el <b>✨ Asistente de prompts</b>.</p>
+      </div>
+    </section>
+
+    <!-- ============ ESTILO ============ -->
+    <section class="tab" data-tab="estilo">
+      <h1>Estilo y rendimiento</h1>
+      <p class="subtitle">Tono de redacción y cómo se completa la nota de Rend.</p>
+      <div class="card">
+        <h2>Estilo del juicio</h2>
+        <label>Tono / instrucciones generales <span class="lbl-hint">(solo aplica al modo IA)</span>
+          <textarea id="tone" rows="3"></textarea>
+        </label>
+        <div class="row">
+          <label>Largo máximo del juicio (caracteres)
+            <input type="number" id="maxChars" min="80" max="2000">
+          </label>
+        </div>
+        <label class="check">
+          <input type="checkbox" id="compararConAnterior">
+          Contrastar con períodos anteriores (evaluación de proceso, solo modo IA)
+        </label>
+      </div>
+      <div class="card">
+        <h2>Rango de Rend (prorrateo)</h2>
+        <p class="desc">Mapea linealmente el promedio (escala 1-10) a tu rango. Ej: min=4, max=7 → un promedio 5 se prorratea a 5,33.</p>
+        <label class="check">
+          <input type="checkbox" id="rendUsarRango">
+          Normalizar Rend a un rango personalizado
+        </label>
+        <div class="row">
+          <label>Nota mínima
+            <input type="number" id="rendMin" min="1" max="10" step="0.5">
+          </label>
+          <label>Nota máxima
+            <input type="number" id="rendMax" min="1" max="10" step="0.5">
+          </label>
+        </div>
+      </div>
+    </section>
+
+    <!-- ============ PROVEEDOR ============ -->
+    <section class="tab" data-tab="proveedor">
+      <h1>Proveedor de IA</h1>
+      <p class="subtitle">Solo necesario para los modos «Solo IA» y «Mixto». Los modos Plantillas y Banco funcionan sin nada de esto.</p>
+      <div class="card">
+        <label>Proveedor
+          <select id="provider"></select>
+        </label>
+        <label>API key
+          <input type="password" id="apiKey" placeholder="sk-...">
+        </label>
+        <a id="apiKeyHelp" href="#" target="_blank" rel="noopener" style="font-size:12px">¿Cómo obtenerla?</a>
+        <label style="margin-top:12px">Modelo
+          <select id="model"></select>
+        </label>
+        <p class="hint">La key se guarda solo en tu navegador (<code>chrome.storage.local</code>) y se recuerda por proveedor.</p>
+      </div>
+    </section>
+
+    <!-- ============ BASES ============ -->
+    <section class="tab" data-tab="bases">
+      <h1>Mis bases</h1>
+      <p class="subtitle">Guardá la configuración actual con un nombre (por asignatura, por grupo, por período…) y cargala cuando la necesites. También podés exportar todo a un archivo para respaldar o compartir con colegas.</p>
+      <div class="card">
+        <h2>Guardar la configuración actual como base</h2>
+        <div class="row" style="align-items:flex-end">
+          <label style="flex:2">Nombre de la base
+            <input type="text" id="baseNombre" placeholder="Ciencias Físicas · 2° A · 1er semestre">
+          </label>
+          <button class="btn" id="guardarBase" style="margin-bottom:12px">💾 Guardar base</button>
+        </div>
+        <p class="hint">Se guarda todo (modo, plantillas, banco, rúbrica, estilo) excepto la API key.</p>
+      </div>
+      <div class="card">
+        <h2>Bases guardadas</h2>
+        <div id="listaBases"><p class="hint">Todavía no guardaste ninguna base.</p></div>
+      </div>
+      <div class="card">
+        <h2>Respaldo</h2>
+        <div class="toolbar">
+          <button class="btn secondary" id="exportarBases">⬇️ Exportar todo (JSON)</button>
+          <button class="btn secondary" id="importarBases">⬆️ Importar desde archivo</button>
+          <input type="file" id="importFile" accept="application/json" hidden>
+        </div>
+        <div class="status" id="basesStatus"></div>
+      </div>
+    </section>
+  </main>
+</div>
+<script src="providers.js"></script>
+<script src="options.js"></script>
+</body>
+</html>
