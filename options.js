@@ -312,6 +312,8 @@ function buildPrompt() {
       '- NO empezar con conectores (sin embargo, además, por otra parte, etc.) ni referirse a otra oración;',
       '- NO mencionar la nota numérica ni la palabra «nota»;',
       '- nombrar contenidos o desempeños concretos, no generalidades;',
+      '- variar los inicios entre las variantes de una misma nota (que no empiecen todas con el mismo verbo) y usar verbos de desempeño precisos (identifica, explica, argumenta, elabora, transfiere, produce);',
+      '- redacción fluida y natural, con sintaxis impecable en español rioplatense formal: concordancias correctas, sin muletillas ni frases telegráficas, y cada frase cerrada con punto;',
       '- opcionalmente puede incluir los placeholders literales {actividad} (una actividad puntual) o {actividades} (todas enumeradas).',
       '',
       'FORMATO DE SALIDA (exacto, texto plano, sin markdown, sin numeración, sin comillas):',
@@ -338,6 +340,7 @@ function buildPrompt() {
     lines.push(
       '',
       `TAREA: escribí un banco de juicios para TODAS las notas del 1 al 10, con ${variantes} variantes distintas por nota (así no se repiten entre alumnos).`,
+      'CALIDAD DE REDACCIÓN: cada frase debe ser UNA oración completa y autónoma en tercera persona, con sintaxis impecable en español rioplatense formal. La extensión puede encadenar dos frases con un conector («Sin embargo, …», «Asimismo, …»), así que ninguna frase debe empezar con conectores ni referirse a otra oración, y todas deben leer bien tanto al inicio del juicio como después de un conector. Variá los inicios entre variantes, no menciones la nota numérica y cerrá cada frase con punto.',
       'FORMATO DE SALIDA (exacto, texto plano, sin markdown, sin numeración, sin comillas):',
       'Nota 1',
       '<juicio variante 1>',

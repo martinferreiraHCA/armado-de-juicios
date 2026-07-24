@@ -331,18 +331,23 @@
   }
 
   // Cuenta cuántos usos lleva cada juicio para rotarlos en orden y volver a
-  // empezar cuando se agotan.
+  // empezar cuando se agotan. `evitarPalabra` (opcional) desempata entre
+  // frases igual de usadas prefiriendo la que NO arranque con esa palabra,
+  // para que la frase secundaria no repita el inicio de la principal
+  // ("Demuestra X. Sin embargo, demuestra Y" queda pobre).
   const bancoUsage = new Map(); // grade -> Map(juicio -> count)
-  function pickBancoJuicio(bank, grade) {
+  function pickBancoJuicio(bank, grade, evitarPalabra) {
     const list = bank.get(grade);
     if (!list || !list.length) return null;
     let counters = bancoUsage.get(grade);
     if (!counters) { counters = new Map(); bancoUsage.set(grade, counters); }
-    let best = list[0];
-    let bestCount = Infinity;
+    let best = null;
+    let bestScore = Infinity;
     for (const j of list) {
       const c = counters.get(j) || 0;
-      if (c < bestCount) { bestCount = c; best = j; }
+      const repiteInicio = evitarPalabra && primeraPalabra(j) === evitarPalabra ? 0.5 : 0;
+      const score = c + repiteInicio;
+      if (score < bestScore) { bestScore = score; best = j; }
     }
     counters.set(best, (counters.get(best) || 0) + 1);
     return best;
@@ -351,9 +356,9 @@
   // Como pickBancoJuicio, pero si la nota exacta no tiene entradas en el
   // banco usa la nota más cercana que sí tenga (empate → la más baja, para
   // no inflar el juicio por encima de lo trabajado).
-  function pickBancoJuicioCercano(bank, grade) {
+  function pickBancoJuicioCercano(bank, grade, evitarPalabra) {
     if (grade == null || !bank.size) return null;
-    const direct = pickBancoJuicio(bank, grade);
+    const direct = pickBancoJuicio(bank, grade, evitarPalabra);
     if (direct) return direct;
     let mejor = null;
     let mejorDist = Infinity;
@@ -361,7 +366,7 @@
       const d = Math.abs(g - grade);
       if (d < mejorDist || (d === mejorDist && mejor != null && g < mejor)) { mejorDist = d; mejor = g; }
     }
-    return mejor == null ? null : pickBancoJuicio(bank, mejor);
+    return mejor == null ? null : pickBancoJuicio(bank, mejor, evitarPalabra);
   }
 
   // ---------------------------------------------------------------------------
@@ -384,8 +389,82 @@
   const BANDA_ORDEN = { plantilla1: 0, plantilla24: 1, plantilla56: 2, plantilla78: 3, plantilla910: 4 };
   const bancoSeq = { contraste: 0, refuerzo: 0 };
 
+  // --- Helpers de redacción: la concatenación tiene que leer como texto
+  // --- escrito por una persona, no como frases pegadas.
+
+  // Conectores que una frase del banco puede traer YA escritos al inicio;
+  // se quitan antes de encadenar para no duplicar ("Sin embargo, sin embargo").
+  const CONECTOR_INICIAL_RE = /^(sin embargo|no obstante|adem[aá]s|asimismo|aun as[ií]|por otra parte|por otro lado|a su vez|igualmente|tambi[eé]n|por su parte)[,:]?\s+/i;
+  // Giros que ya cargan su propio contraste: si la frase arranca así, sumar
+  // un conector adversativo delante queda redundante («Sin embargo, aunque…»).
+  const CONTRASTE_PROPIO_RE = /^(aunque|si bien|a pesar de|pese a)\b/i;
+
+  function primeraPalabra(s) {
+    const m = String(s || '').trim().replace(CONECTOR_INICIAL_RE, '').match(/[a-zA-Záéíóúñü]+/);
+    return m ? m[0].toLowerCase() : '';
+  }
+
+  // Un juicio nunca debe ARRANCAR con un conector («Sin embargo, …»): si la
+  // frase del banco lo trae escrito, se lo quitamos y recapitalizamos.
+  function sinConectorInicial(s) {
+    const t = String(s || '').trim().replace(CONECTOR_INICIAL_RE, '');
+    return t ? t[0].toUpperCase() + t.slice(1) : t;
+  }
+
+  function asegurarPunto(s) {
+    s = String(s || '').trim();
+    if (!s) return s;
+    return /[.!?…]$/.test(s) ? s : s + '.';
+  }
+
+  // Baja la mayúscula inicial para encadenar tras un conector, salvo que la
+  // primera palabra sea una sigla (dos o más mayúsculas seguidas).
   function minusculaInicial(s) {
-    return s ? s[0].toLowerCase() + s.slice(1) : s;
+    if (!s) return s;
+    const primera = (s.match(/^\S+/) || [''])[0];
+    if (/^[A-ZÁÉÍÓÚÑ]{2,}/.test(primera)) return s;
+    return s[0].toLowerCase() + s.slice(1);
+  }
+
+  // Encadena la frase secundaria a la principal con buena sintaxis:
+  //   - cierra la principal con punto;
+  //   - le quita a la secundaria conectores que ya trajera escritos;
+  //   - si la secundaria arranca con su propio giro adversativo («Aunque…»,
+  //     «Si bien…») la agrega como oración aparte, sin conector;
+  //   - si no, la une como «Conector, frase…» con minúscula inicial.
+  function unirConConector(principal, conector, secundaria) {
+    principal = asegurarPunto(principal);
+    let sec = String(secundaria || '').trim().replace(CONECTOR_INICIAL_RE, '');
+    if (!sec) return principal;
+    sec = sec[0].toUpperCase() + sec.slice(1);
+    if (CONTRASTE_PROPIO_RE.test(sec)) return `${principal} ${asegurarPunto(sec)}`;
+    return `${principal} ${conector}, ${asegurarPunto(minusculaInicial(sec))}`;
+  }
+
+  // Pulido final: puntuación y espacios prolijos, mayúscula inicial y cierre
+  // con punto. Se aplica a todo juicio generado sin IA.
+  function pulirRedaccion(s) {
+    s = String(s || '')
+      .replace(/\s+([.,;:!?])/g, '$1')  // sin espacio antes de puntuación
+      .replace(/\.{2,}/g, '.')          // puntos duplicados
+      .replace(/,{2,}/g, ',')
+      .replace(/([,;:])(?=[^\s0-9])/g, '$1 ') // espacio después de , ; : (no en cifras "5,5")
+      .replace(/\s{2,}/g, ' ')
+      .trim();
+    if (!s) return s;
+    s = s[0].toUpperCase() + s.slice(1);
+    return asegurarPunto(s);
+  }
+
+  // Recorte al largo máximo sin dejar oraciones truncas: si hay un punto
+  // pasada la mitad del texto permitido, corta ahí; si no, corta por palabra
+  // y cierra con puntos suspensivos.
+  function recortarProlijo(text, max) {
+    if (text.length <= max) return text;
+    const corte = text.slice(0, max);
+    const ultimoPunto = corte.lastIndexOf('.');
+    if (ultimoPunto >= max * 0.5) return corte.slice(0, ultimoPunto + 1);
+    return corte.replace(/\s+\S*$/, '').trim() + '…';
   }
 
   // Cuenta cuántas notas redondeadas hay de cada valor 1-10.
@@ -431,7 +510,8 @@
 
     const principal = pickBancoJuicioCercano(bank, notaPrincipal);
     if (!principal) return null;
-    const partes = [aplicarPlaceholders(principal, notaPrincipal, cfg)];
+    const principalTxt = sinConectorInicial(aplicarPlaceholders(principal, notaPrincipal, cfg));
+    let juicio = asegurarPunto(principalTxt);
 
     // Banda secundaria: la que más notas concentre fuera de la principal
     // (y fuera de la banda 1), si llega al umbral de 2 notas o 25% del total.
@@ -452,24 +532,27 @@
     }
     if (sec) {
       const notaSec = notaPrevalente(sec.e.notas, promedio);
-      const fraseSec = notaSec != null ? pickBancoJuicioCercano(bank, notaSec) : null;
+      // Evitamos que la frase secundaria arranque con la misma palabra que
+      // la principal (redacción repetitiva).
+      const fraseSec = notaSec != null
+        ? pickBancoJuicioCercano(bank, notaSec, primeraPalabra(principalTxt))
+        : null;
       if (fraseSec) {
         const esMasBaja = BANDA_ORDEN[sec.b] < BANDA_ORDEN[bandaPrincipal];
         const lista = parseLineas(esMasBaja ? cfg.bancoConectoresContraste : cfg.bancoConectoresRefuerzo);
         const conector = lista.length
           ? lista[(bancoSeq[esMasBaja ? 'contraste' : 'refuerzo']++) % lista.length]
           : (esMasBaja ? 'Sin embargo' : 'Asimismo');
-        partes.push(`${conector}, ${minusculaInicial(aplicarPlaceholders(fraseSec, notaSec, cfg))}`);
+        juicio = unirConConector(juicio, conector, aplicarPlaceholders(fraseSec, notaSec, cfg));
       }
     }
 
-    let juicio = partes.filter(Boolean).join(' ').trim();
-    if (!juicio) return null;
+    if (!juicio.trim()) return null;
     const adendumNC = (cfg.bancoNCAddendum || '').trim();
     if (ncCount > 0 && adendumNC && !/(n\s*\/?\s*c\b|sin calificar)/i.test(juicio)) {
-      juicio += ' ' + adendumNC;
+      juicio = asegurarPunto(juicio) + ' ' + asegurarPunto(adendumNC);
     }
-    return juicio;
+    return pulirRedaccion(juicio);
   }
 
   // ---------------------------------------------------------------------------
@@ -540,7 +623,8 @@
     const lower = (juicio || '').toLowerCase();
     const yaMenciona = /(plataforma|entregas?\s+pendientes?|tareas?\s+digitales?|completar\s+(las\s+)?actividades?\s+pendientes?)/i.test(lower);
     if (yaMenciona) return juicio;
-    return (juicio || '').trim() + ' ' + addendum.trim();
+    // Cerramos la oración anterior con punto antes de sumar el adendum.
+    return asegurarPunto(juicio) + ' ' + asegurarPunto(addendum.trim());
   }
 
   function rubricaResumen(c, promedio) {
@@ -738,7 +822,7 @@
         }
         if (!candidato && notaParaBanco != null) {
           const c = pickBancoJuicio(bank, notaParaBanco);
-          if (c) candidato = aplicarPlaceholders(c, notaParaBanco, CFG);
+          if (c) candidato = sinConectorInicial(aplicarPlaceholders(c, notaParaBanco, CFG));
         }
         if (candidato) {
           text = aplicarAdendumPlataforma(candidato, hayAusencias, CFG.bancoPlataformaAddendum);
@@ -782,7 +866,10 @@
           text = aplicarAdendumPlataforma(text, hayAusencias, CFG.bancoPlataformaAddendum);
         }
       }
-      const recortado = text.length > CFG.maxChars ? text.slice(0, CFG.maxChars).replace(/\s+\S*$/, '') : text;
+      // Pulido final para los juicios generados sin IA (los mensajes de
+      // error "(sin juicio…)" no pasan por acá porque no marcan via*).
+      if (viaBanco || viaPlantilla) text = pulirRedaccion(text);
+      const recortado = recortarProlijo(text, CFG.maxChars);
       setNativeValue(row.juicio, recortado);
       fireGxChange(row.juicio);
       juicioCompletado = recortado;
