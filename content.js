@@ -18,6 +18,13 @@
     modoGeneracion: 'ia', // 'ia' | 'banco' | 'plantilla' | 'mixto'
     bancoJuicios: '',
     bancoPlataformaAddendum: 'No debe descuidar las entregas en plataforma.',
+    // Composición del juicio según la distribución de notas (modo banco/mixto):
+    // en vez de mirar solo el promedio, se cuentan las notas 1-10 y las N/C
+    // y se concatenan frases del banco unidas con conectores.
+    bancoComponer: true,
+    bancoConectoresContraste: 'Sin embargo\nNo obstante\nAun así',
+    bancoConectoresRefuerzo: 'Asimismo\nAdemás\nA su vez',
+    bancoNCAddendum: 'Tiene actividades sin calificar que deberá completar para consolidar su proceso.',
     // Generador por plantillas (sin IA): actividades del período + frases con
     // sintaxis configurable por banda de nota. Placeholders soportados:
     //   {actividad}   → una actividad de la lista (rota entre ellas)
@@ -341,6 +348,130 @@
     return best;
   }
 
+  // Como pickBancoJuicio, pero si la nota exacta no tiene entradas en el
+  // banco usa la nota más cercana que sí tenga (empate → la más baja, para
+  // no inflar el juicio por encima de lo trabajado).
+  function pickBancoJuicioCercano(bank, grade) {
+    if (grade == null || !bank.size) return null;
+    const direct = pickBancoJuicio(bank, grade);
+    if (direct) return direct;
+    let mejor = null;
+    let mejorDist = Infinity;
+    for (const g of bank.keys()) {
+      const d = Math.abs(g - grade);
+      if (d < mejorDist || (d === mejorDist && mejor != null && g < mejor)) { mejorDist = d; mejor = g; }
+    }
+    return mejor == null ? null : pickBancoJuicio(bank, mejor);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Composición del juicio desde el banco según la DISTRIBUCIÓN de notas.
+  // Criterios (documentados también en la página de opciones):
+  //   1. Se cuentan las notas redondeadas del período (1 a 10) y las N/C.
+  //   2. La NOTA PRINCIPAL es la más frecuente (moda). En caso de empate gana
+  //      la más cercana al promedio; si persiste, la más alta. Con el
+  //      prorrateo de Rend activo manda la nota final prorrateada, para que
+  //      el juicio no contradiga el Rend que queda en el boletín.
+  //   3. Si otra banda (2-4, 5-6, 7-8, 9-10) concentra al menos 2 notas o el
+  //      25% del total, se agrega una FRASE SECUNDARIA del banco para la nota
+  //      más repetida de esa banda, unida con un conector de contraste (si la
+  //      banda es más baja que la principal) o de refuerzo (si es más alta).
+  //      La banda 1 no genera frase secundaria: las ausencias ya se cubren
+  //      con el adendum de entregas pendientes.
+  //   4. Si hay notas N/C se agrega el adendum configurado para N/C.
+  // Las frases del banco admiten los mismos placeholders que las plantillas
+  // ({actividad}, {actividades}, {conector}, {nota}).
+  const BANDA_ORDEN = { plantilla1: 0, plantilla24: 1, plantilla56: 2, plantilla78: 3, plantilla910: 4 };
+  const bancoSeq = { contraste: 0, refuerzo: 0 };
+
+  function minusculaInicial(s) {
+    return s ? s[0].toLowerCase() + s.slice(1) : s;
+  }
+
+  // Cuenta cuántas notas redondeadas hay de cada valor 1-10.
+  function distribucionNotas(numeros) {
+    const counts = new Map();
+    for (const n of numeros) {
+      const r = Math.max(1, Math.min(10, Math.round(n)));
+      counts.set(r, (counts.get(r) || 0) + 1);
+    }
+    return counts;
+  }
+
+  function notaPrevalente(counts, promedio) {
+    let mejor = null;
+    for (const [g, c] of counts) {
+      if (mejor == null) { mejor = g; continue; }
+      const cm = counts.get(mejor);
+      if (c > cm) { mejor = g; continue; }
+      if (c < cm) continue;
+      // Empate en frecuencia: más cercana al promedio; después, la más alta.
+      if (promedio != null) {
+        const dg = Math.abs(g - promedio);
+        const dm = Math.abs(mejor - promedio);
+        if (dg < dm || (dg === dm && g > mejor)) mejor = g;
+      } else if (g > mejor) {
+        mejor = g;
+      }
+    }
+    return mejor;
+  }
+
+  function componerJuicioBanco(bank, numeros, ncCount, cfg, notaBase) {
+    if (!bank.size) return null;
+    const counts = distribucionNotas(numeros);
+    const promedio = calcularPromedio(numeros);
+    const total = numeros.length;
+
+    let notaPrincipal = (cfg.rendUsarRango && notaBase != null)
+      ? notaBase
+      : notaPrevalente(counts, promedio);
+    if (notaPrincipal == null) notaPrincipal = notaBase;
+    if (notaPrincipal == null) return null;
+
+    const principal = pickBancoJuicioCercano(bank, notaPrincipal);
+    if (!principal) return null;
+    const partes = [aplicarPlaceholders(principal, notaPrincipal, cfg)];
+
+    // Banda secundaria: la que más notas concentre fuera de la principal
+    // (y fuera de la banda 1), si llega al umbral de 2 notas o 25% del total.
+    const bandaPrincipal = bandaDePlantilla(notaPrincipal);
+    const porBanda = new Map(); // banda -> { count, notas: Map(nota -> count) }
+    for (const [g, c] of counts) {
+      const b = bandaDePlantilla(g);
+      if (b === bandaPrincipal || b === 'plantilla1') continue;
+      let e = porBanda.get(b);
+      if (!e) { e = { count: 0, notas: new Map() }; porBanda.set(b, e); }
+      e.count += c;
+      e.notas.set(g, c);
+    }
+    let sec = null;
+    for (const [b, e] of porBanda) {
+      if (e.count < 2 && (!total || e.count / total < 0.25)) continue;
+      if (!sec || e.count > sec.e.count) sec = { b, e };
+    }
+    if (sec) {
+      const notaSec = notaPrevalente(sec.e.notas, promedio);
+      const fraseSec = notaSec != null ? pickBancoJuicioCercano(bank, notaSec) : null;
+      if (fraseSec) {
+        const esMasBaja = BANDA_ORDEN[sec.b] < BANDA_ORDEN[bandaPrincipal];
+        const lista = parseLineas(esMasBaja ? cfg.bancoConectoresContraste : cfg.bancoConectoresRefuerzo);
+        const conector = lista.length
+          ? lista[(bancoSeq[esMasBaja ? 'contraste' : 'refuerzo']++) % lista.length]
+          : (esMasBaja ? 'Sin embargo' : 'Asimismo');
+        partes.push(`${conector}, ${minusculaInicial(aplicarPlaceholders(fraseSec, notaSec, cfg))}`);
+      }
+    }
+
+    let juicio = partes.filter(Boolean).join(' ').trim();
+    if (!juicio) return null;
+    const adendumNC = (cfg.bancoNCAddendum || '').trim();
+    if (ncCount > 0 && adendumNC && !/(n\s*\/?\s*c\b|sin calificar)/i.test(juicio)) {
+      juicio += ' ' + adendumNC;
+    }
+    return juicio;
+  }
+
   // ---------------------------------------------------------------------------
   // Generador por plantillas (modo 'plantilla', sin IA): compone el juicio con
   // frases configurables por banda de nota + las actividades del período.
@@ -369,15 +500,12 @@
   // Rotación: por banda llevamos el índice de plantilla, actividad y conector
   // para que juicios consecutivos no queden idénticos (variedad natural).
   const plantillaSeq = { tpl: new Map(), act: 0, con: 0 };
-  function generarJuicioPlantilla(nota, cfg) {
-    const banda = bandaDePlantilla(nota);
-    if (!banda) return null;
-    const templates = parseLineas(cfg[banda]);
-    if (!templates.length) return null;
-    const idx = plantillaSeq.tpl.get(banda) || 0;
-    plantillaSeq.tpl.set(banda, idx + 1);
-    let text = templates[idx % templates.length];
 
+  // Reemplaza los placeholders {actividad}/{actividades}/{conector}/{nota}
+  // en una frase. Lo usan tanto las plantillas como el banco de juicios,
+  // así las frases del banco también quedan personalizadas con las
+  // actividades del período.
+  function aplicarPlaceholders(text, nota, cfg) {
     const actividades = parseLineas(cfg.plantillaActividades);
     const conectores = parseLineas(cfg.plantillaConectores);
     const fallbackActs = 'las actividades propuestas en el período';
@@ -390,11 +518,21 @@
       if (!conectores.length) return 'Además';
       return conectores[(plantillaSeq.con++) % conectores.length];
     });
-    text = text.replace(/\{nota\}/gi, String(Math.round(nota)));
+    if (nota != null) text = text.replace(/\{nota\}/gi, String(Math.round(nota)));
     // Limpieza: espacios dobles y mayúscula inicial.
     text = text.replace(/\s{2,}/g, ' ').trim();
     if (text) text = text[0].toUpperCase() + text.slice(1);
-    return text || null;
+    return text;
+  }
+
+  function generarJuicioPlantilla(nota, cfg) {
+    const banda = bandaDePlantilla(nota);
+    if (!banda) return null;
+    const templates = parseLineas(cfg[banda]);
+    if (!templates.length) return null;
+    const idx = plantillaSeq.tpl.get(banda) || 0;
+    plantillaSeq.tpl.set(banda, idx + 1);
+    return aplicarPlaceholders(templates[idx % templates.length], nota, cfg) || null;
   }
 
   function aplicarAdendumPlataforma(juicio, hayAusencias, addendum) {
@@ -442,12 +580,18 @@
     return lines.join('\n');
   }
 
-  function buildUserMessage({ alumno, libreta, periodoDsc, notasDetalle, promedio, clasif, historial, incluirHistorial }) {
+  function buildUserMessage({ alumno, libreta, periodoDsc, notasDetalle, promedio, clasif, numeros, historial, incluirHistorial }) {
+    const dist = distribucionNotas(numeros || []);
+    const distTxt = [...dist.entries()]
+      .sort((a, b) => a[0] - b[0])
+      .map(([g, c]) => `nota ${g} × ${c}`)
+      .join(', ');
     const parts = [
       `Alumno: ${alumno || 'N/D'}`,
       `Libreta/Asignatura: ${libreta || 'N/D'}`,
       `Período evaluado: ${periodoDsc || 'N/D'}`,
       `Promedio numérico calculado: ${promedio == null ? 'sin notas numéricas' : promedio.toFixed(2)}`,
+      `Distribución de notas (cuántas de cada valor): ${distTxt || 'sin notas numéricas'}`,
       `Resumen según rúbrica: ${rubricaResumen(clasif, promedio)}`,
       '',
       'Detalle de notas del período:',
@@ -499,6 +643,9 @@
     if (periodData.OActividadesDetalle) lines.push(`Detalle de tareas: ${periodData.OActividadesDetalle}`);
     if (periodData.NotasInsuficientes > 0) {
       lines.push(`Notas insuficientes (marcadas en SIGED): ${periodData.NotasInsuficientes}`);
+    }
+    if (periodData.NoCalificadas > 0) {
+      lines.push(`Actividades sin calificar (N/C): ${periodData.NoCalificadas}`);
     }
     if (periodData.InasInjustificadas || periodData.InasJustificadas || periodData.InasFictas) {
       lines.push(`Inasistencias - injustif.: ${periodData.InasInjustificadas || 0}, justif.: ${periodData.InasJustificadas || 0}, fictas: ${periodData.InasFictas || 0}`);
@@ -575,11 +722,24 @@
       const modo = CFG.modoGeneracion || 'ia';
       let text = '';
       let viaBanco = false;
+      let viaBancoCompuesto = false;
       let viaPlantilla = false;
       // Banco si el modo es 'banco' o 'mixto'.
       if (modo === 'banco' || modo === 'mixto') {
         const bank = parseBancoJuicios(CFG.bancoJuicios || '');
-        const candidato = notaParaBanco != null ? pickBancoJuicio(bank, notaParaBanco) : null;
+        let candidato = null;
+        // Composición por distribución: cuenta las notas 1-10 y las N/C del
+        // período y concatena frases del banco con conectores. Si está
+        // apagada (o no produce nada) se cae a la selección clásica por
+        // nota redondeada.
+        if (CFG.bancoComponer) {
+          candidato = componerJuicioBanco(bank, numeros, periodData.NoCalificadas || 0, CFG, notaParaBanco);
+          viaBancoCompuesto = !!candidato;
+        }
+        if (!candidato && notaParaBanco != null) {
+          const c = pickBancoJuicio(bank, notaParaBanco);
+          if (c) candidato = aplicarPlaceholders(c, notaParaBanco, CFG);
+        }
         if (candidato) {
           text = aplicarAdendumPlataforma(candidato, hayAusencias, CFG.bancoPlataformaAddendum);
           viaBanco = true;
@@ -614,6 +774,7 @@
               notasDetalle,
               promedio,
               clasif,
+              numeros,
               historial: opts.historial,
               incluirHistorial: !!CFG.compararConAnterior,
             }),
@@ -625,7 +786,7 @@
       setNativeValue(row.juicio, recortado);
       fireGxChange(row.juicio);
       juicioCompletado = recortado;
-      debugViz.mark(row.juicio, debugViz.colors.filled, `✓ Juicio (${recortado.length}c, ${viaBanco ? 'banco' : viaPlantilla ? 'plantilla' : 'IA'})`);
+      debugViz.mark(row.juicio, debugViz.colors.filled, `✓ Juicio (${recortado.length}c, ${viaBanco ? (viaBancoCompuesto ? 'banco compuesto' : 'banco') : viaPlantilla ? 'plantilla' : 'IA'})`);
     }
 
     const partes = [];
@@ -704,7 +865,7 @@
       const total = o + e + a;
       const tag = p.EntregaHabilitada ? ' [HABILITADO]' : '';
       const aviso = p.EntregaHabilitada && total === 0 ? ' ⚠ habilitado pero sin notas detectadas' : '';
-      log(`      ${p.ReuDsc || p.ReuCod}: O=${o} E=${e} A=${a}${p.RendVisible ? ` R=${p.RendVisible}` : ''}${p.NotasInsuficientes ? ` (${p.NotasInsuficientes} insuf.)` : ''}${tag}${aviso}`);
+      log(`      ${p.ReuDsc || p.ReuCod}: O=${o} E=${e} A=${a}${p.NoCalificadas ? ` NC=${p.NoCalificadas}` : ''}${p.RendVisible ? ` R=${p.RendVisible}` : ''}${p.NotasInsuficientes ? ` (${p.NotasInsuficientes} insuf.)` : ''}${tag}${aviso}`);
     }
 
     for (let i = 0; i < rows.length; i++) {
@@ -1144,10 +1305,17 @@
       const dataTbl = evalTbl.querySelector('table.beTableLibretaDatosEval');
       const haystack = dataTbl || evalTbl;
       const allSpans = haystack.querySelectorAll('span');
-      const grouped = { orales: [], escritas: [], oAct: [], R: [] };
+      const grouped = { orales: [], escritas: [], oAct: [], R: [], nc: 0 };
       for (const s of allSpans) {
         const t = (s.textContent || '').trim();
         if (!t) continue;
+        // "N/C" (no calificado): no es nota numérica pero cuenta para la
+        // composición del juicio y como contexto para la IA.
+        if (/^(n\s*\/\s*c|nc)$/i.test(t)) {
+          grouped.nc += 1;
+          debugViz.mark(s, debugViz.colors.noteSkip, 'N/C (sin calificar)');
+          continue;
+        }
         if (!/^\d{1,2}([.,]\d{1,2})?$/.test(t)) continue;
         const num = parseFloat(t.replace(',', '.'));
         if (Number.isNaN(num) || num < 0 || num > 10) continue;
@@ -1188,6 +1356,7 @@
         escritas: grouped.escritas,
         oAct: grouped.oAct,
         rendText,
+        ncCount: grouped.nc,
       });
     }
     try {
@@ -1239,7 +1408,7 @@
         && getComputedStyle(juicioTa).display !== 'none';
       const habilitado = enabledCalif || enabledJuicio;
 
-      const g = lookupGrades(grades, dsc) || { orales: [], escritas: [], oAct: [], rendText: '' };
+      const g = lookupGrades(grades, dsc) || { orales: [], escritas: [], oAct: [], rendText: '', ncCount: 0 };
       const all = [...g.orales, ...g.escritas, ...g.oAct];
       const detalle = all
         .map((n) => {
@@ -1266,6 +1435,8 @@
         RendVisible: g.rendText,
         // Cantidad de notas con ColorTextoBaja (insuficientes) — útil para Claude.
         NotasInsuficientes: all.filter((n) => n.colorBaja).length,
+        // Cantidad de celdas "N/C" (sin calificar) del período.
+        NoCalificadas: g.ncCount || 0,
         InasInjustificadas: '',
         InasJustificadas: '',
         InasFictas: '',
