@@ -53,6 +53,15 @@ Se abre una página de opciones a pantalla completa con pestañas:
   en cualquier IA gratuita (ChatGPT, Gemini, Claude web…) que produce el
   banco completo, la rúbrica o las frases de plantillas; pegás la respuesta
   de vuelta y se carga sola en la configuración. Sin API key ni costos.
+  El modo **«Banco + rúbrica desde mis criterios de logro»** parte de dos
+  campos redactados por el/la docente — *lo que diste en el período*
+  (contenidos) y *lo que querés evaluar* (criterios de logro) — y genera un
+  prompt de dos pasos: primero la IA define el criterio de logro de cada
+  banda de notas y después escribe el banco completo con frases pensadas
+  para la composición automática (oraciones autónomas, sin conectores
+  iniciales, que leen bien solas o encadenadas con «Sin embargo, …» /
+  «Asimismo, …»). Al pegar la respuesta se cargan la rúbrica y el banco de
+  una sola vez.
 - **📊 Rúbrica** — qué significa cada rango de notas (instrucción
   obligatoria para el modo IA).
 - **🎨 Estilo y Rend.** — tono, largo máximo, contraste con períodos

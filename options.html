@@ -232,6 +232,7 @@
         <div class="row">
           <label>¿Qué querés generar?
             <select id="promptTipo">
+              <option value="logro">Banco + rúbrica desde mis criterios de logro</option>
               <option value="banco">Banco de juicios completo (notas 1 a 10)</option>
               <option value="rubrica">Descripciones de la rúbrica (5 bandas)</option>
               <option value="plantillas">Frases para el generador de plantillas</option>
@@ -249,9 +250,16 @@
             <input type="text" id="promptNivel" placeholder="2° año de ciclo básico">
           </label>
         </div>
+        <label>Lo que diste en el período <span class="lbl-hint">(contenidos / temas trabajados — texto libre o uno por línea)</span>
+          <textarea id="promptContenidos" rows="3" placeholder="Sistema solar: características de los planetas&#10;Estados de la materia y cambios de estado"></textarea>
+        </label>
+        <label>Lo que querés evaluar <span class="lbl-hint">(criterios de logro: qué esperás que demuestren)</span>
+          <textarea id="promptCriterios" rows="3" placeholder="Que identifiquen los planetas y sus características&#10;Que expliquen los cambios de estado con ejemplos cotidianos"></textarea>
+        </label>
         <label>Actividades del período <span class="lbl-hint">(opcional, una por línea — le da contexto a la IA)</span>
           <textarea id="promptActividades" rows="3"></textarea>
         </label>
+        <p class="hint" id="tipoLogroHint">Con «Banco + rúbrica desde mis criterios de logro» la IA primero define el criterio de logro de cada banda de notas a partir de lo que diste y lo que querés evaluar, y después escribe el banco completo con frases pensadas para la composición automática (frases autónomas que leen bien solas o encadenadas con conectores). Al pegar la respuesta se cargan la rúbrica y el banco de una sola vez.</p>
         <button class="btn" id="generarPrompt">Generar prompt</button>
         <label style="margin-top:14px">Prompt generado
           <textarea id="promptResultado" rows="10" readonly placeholder="Apretá «Generar prompt» y después copialo…"></textarea>
