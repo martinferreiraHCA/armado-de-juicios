@@ -193,7 +193,27 @@
           <textarea id="bancoJuicios" rows="14" placeholder="Nota 4&#10;Reconoce aspectos básicos de los temas trabajados…&#10;Explora los contenidos con apoyo docente…&#10;&#10;Nota 5&#10;Comprende los aspectos iniciales de la propuesta…"></textarea>
         </label>
         <div class="chips" id="bancoCoverage"></div>
-        <p class="hint">💡 ¿No querés escribirlos a mano? Usá el <b>✨ Asistente de prompts</b> para que una IA gratuita te genere el banco completo y pegalo acá.</p>
+        <p class="hint">💡 ¿No querés escribirlos a mano? Usá el <b>✨ Asistente de prompts</b> para que una IA gratuita te genere el banco completo y pegalo acá. Las frases del banco admiten los placeholders <code>{actividad}</code>, <code>{actividades}</code>, <code>{conector}</code> y <code>{nota}</code> (se completan con las actividades y conectores del Generador de plantillas).</p>
+      </div>
+      <div class="card">
+        <h2>Composición según la distribución de notas</h2>
+        <p class="desc">En vez de mirar solo el promedio, la extensión cuenta cuántas notas de cada valor (1 a 10) y cuántas N/C tiene el período, y arma un juicio personalizado concatenando frases del banco con conectores.</p>
+        <label class="check">
+          <input type="checkbox" id="bancoComponer">
+          Componer el juicio según la prevalencia de notas
+        </label>
+        <p class="hint">Criterios: la <b>nota principal</b> es la más repetida (moda; empate → la más cercana al promedio, y luego la más alta). Si otra banda (2-4, 5-6, 7-8 o 9-10) concentra al menos 2 notas o el 25% del total, se agrega una <b>frase secundaria</b> del banco para esa banda, unida con un conector de contraste (si es más baja) o de refuerzo (si es más alta). Las notas 1 (ausencias) se cubren con el adendum de entregas pendientes, y las N/C con su propio adendum. Con el prorrateo de Rend activo, la nota principal es la nota prorrateada para no contradecir el boletín.</p>
+        <div class="row">
+          <label>Conectores de contraste <span class="lbl-hint">(cuando la frase secundaria es más baja; uno por línea)</span>
+            <textarea id="bancoConectoresContraste" rows="3"></textarea>
+          </label>
+          <label>Conectores de refuerzo <span class="lbl-hint">(cuando es más alta; uno por línea)</span>
+            <textarea id="bancoConectoresRefuerzo" rows="3"></textarea>
+          </label>
+        </div>
+        <label>Adendum para notas N/C <span class="lbl-hint">(se agrega al final si el período tiene actividades sin calificar)</span>
+          <input type="text" id="bancoNCAddendum">
+        </label>
       </div>
       <div class="card">
         <h2>Adendum de entregas pendientes</h2>
@@ -212,6 +232,7 @@
         <div class="row">
           <label>¿Qué querés generar?
             <select id="promptTipo">
+              <option value="logro">Banco + rúbrica desde mis criterios de logro</option>
               <option value="banco">Banco de juicios completo (notas 1 a 10)</option>
               <option value="rubrica">Descripciones de la rúbrica (5 bandas)</option>
               <option value="plantillas">Frases para el generador de plantillas</option>
@@ -229,9 +250,16 @@
             <input type="text" id="promptNivel" placeholder="2° año de ciclo básico">
           </label>
         </div>
+        <label>Lo que diste en el período <span class="lbl-hint">(contenidos / temas trabajados — texto libre o uno por línea)</span>
+          <textarea id="promptContenidos" rows="3" placeholder="Sistema solar: características de los planetas&#10;Estados de la materia y cambios de estado"></textarea>
+        </label>
+        <label>Lo que querés evaluar <span class="lbl-hint">(criterios de logro: qué esperás que demuestren)</span>
+          <textarea id="promptCriterios" rows="3" placeholder="Que identifiquen los planetas y sus características&#10;Que expliquen los cambios de estado con ejemplos cotidianos"></textarea>
+        </label>
         <label>Actividades del período <span class="lbl-hint">(opcional, una por línea — le da contexto a la IA)</span>
           <textarea id="promptActividades" rows="3"></textarea>
         </label>
+        <p class="hint" id="tipoLogroHint">Con «Banco + rúbrica desde mis criterios de logro» la IA primero define el criterio de logro de cada banda de notas a partir de lo que diste y lo que querés evaluar, y después escribe el banco completo con frases pensadas para la composición automática (frases autónomas que leen bien solas o encadenadas con conectores). Al pegar la respuesta se cargan la rúbrica y el banco de una sola vez.</p>
         <button class="btn" id="generarPrompt">Generar prompt</button>
         <label style="margin-top:14px">Prompt generado
           <textarea id="promptResultado" rows="10" readonly placeholder="Apretá «Generar prompt» y después copialo…"></textarea>

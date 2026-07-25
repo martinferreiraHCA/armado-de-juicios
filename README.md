@@ -39,11 +39,29 @@ Se abre una página de opciones a pantalla completa con pestañas:
   como «X, Y y Z»), `{conector}` (rota entre conectores) y `{nota}`.
   Botón «Ver ejemplos generados» para previsualizar.
 - **🗂️ Banco de juicios** — con chips de cobertura por nota (verde = tiene
-  variantes, rojo = falta).
+  variantes, rojo = falta). Incluye **composición según la distribución de
+  notas**: en vez de mirar solo el promedio, cuenta cuántas notas de cada
+  valor (1 a 10) y cuántas N/C tiene el período y concatena frases del
+  banco con conectores. La nota principal es la más repetida (moda; empate
+  → la más cercana al promedio); si otra banda (2-4, 5-6, 7-8, 9-10)
+  concentra al menos 2 notas o el 25% del total se agrega una frase
+  secundaria unida con un conector de contraste («Sin embargo, …») o de
+  refuerzo («Asimismo, …»). Las ausencias (nota 1) se cubren con el adendum
+  de entregas pendientes y las N/C con un adendum propio. Las frases del
+  banco admiten los mismos placeholders que las plantillas.
 - **✨ Asistente de prompts (sin API)** — genera un prompt listo para pegar
   en cualquier IA gratuita (ChatGPT, Gemini, Claude web…) que produce el
   banco completo, la rúbrica o las frases de plantillas; pegás la respuesta
   de vuelta y se carga sola en la configuración. Sin API key ni costos.
+  El modo **«Banco + rúbrica desde mis criterios de logro»** parte de dos
+  campos redactados por el/la docente — *lo que diste en el período*
+  (contenidos) y *lo que querés evaluar* (criterios de logro) — y genera un
+  prompt de dos pasos: primero la IA define el criterio de logro de cada
+  banda de notas y después escribe el banco completo con frases pensadas
+  para la composición automática (oraciones autónomas, sin conectores
+  iniciales, que leen bien solas o encadenadas con «Sin embargo, …» /
+  «Asimismo, …»). Al pegar la respuesta se cargan la rúbrica y el banco de
+  una sola vez.
 - **📊 Rúbrica** — qué significa cada rango de notas (instrucción
   obligatoria para el modo IA).
 - **🎨 Estilo y Rend.** — tono, largo máximo, contraste con períodos
