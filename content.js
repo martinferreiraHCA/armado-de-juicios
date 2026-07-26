@@ -470,6 +470,7 @@
   // con punto. Se aplica a todo juicio generado sin IA.
   function pulirRedaccion(s) {
     s = String(s || '')
+      .replace(/…+/g, '.')              // «…» pegados desde el banco → punto
       .replace(/\s+([.,;:!?])/g, '$1')  // sin espacio antes de puntuación
       .replace(/\.{2,}/g, '.')          // puntos duplicados
       .replace(/,{2,}/g, ',')
@@ -482,13 +483,14 @@
   }
 
   // Recorte al largo máximo sin dejar oraciones truncas: si hay un punto
-  // pasada la mitad del texto permitido, corta ahí; si no, corta por palabra
-  // y cierra con puntos suspensivos.
+  // razonablemente adentro del texto permitido, corta ahí (oraciones
+  // completas); solo como último recurso corta por palabra y cierra con
+  // puntos suspensivos.
   function recortarProlijo(text, max) {
     if (text.length <= max) return text;
     const corte = text.slice(0, max);
     const ultimoPunto = corte.lastIndexOf('.');
-    if (ultimoPunto >= max * 0.5) return corte.slice(0, ultimoPunto + 1);
+    if (ultimoPunto >= max * 0.3) return corte.slice(0, ultimoPunto + 1);
     return corte.replace(/\s+\S*$/, '').trim() + '…';
   }
 
@@ -605,10 +607,12 @@
       { nombre: 'Escritas', texto: cfg.bancoEscritas, notas: notasToNumeros(parseNotas(periodData.Escritos)) },
       { nombre: 'Otras actuaciones', texto: cfg.bancoOtras, notas: notasToNumeros(parseNotas(periodData.OActividades)) },
     ];
-    let juicio = '';
+    // 1) Selección: frase por ítem con notas + conector respecto del ítem
+    //    anterior. Se elige todo primero para poder recomponer si el juicio
+    //    excede el largo máximo, sin volver a gastar la rotación del banco.
+    const seleccion = []; // { frase, conector }
     let prevNota = null;
     let prevInicio = '';
-    let frasesUsadas = 0;
     for (const cat of categorias) {
       if (!cat.notas.length) continue; // ítem sin notas → se omite
       const bank = parseBancoJuicios(cat.texto || '');
@@ -619,9 +623,8 @@
       const cruda = pickBancoJuicioCercano(bank, nota, prevInicio);
       if (!cruda) continue;
       const frase = aplicarPlaceholders(cruda, nota, cfg);
-      if (!juicio) {
-        juicio = asegurarPunto(sinConectorInicial(frase));
-      } else {
+      let conector = null;
+      if (seleccion.length) {
         const bPrev = BANDA_ORDEN[bandaDePlantilla(prevNota)];
         const bCur = BANDA_ORDEN[bandaDePlantilla(nota)];
         const tipo = bCur < bPrev ? 'contraste' : bCur > bPrev ? 'refuerzo' : 'secuencia';
@@ -632,25 +635,35 @@
         };
         const porDefecto = { contraste: 'Sin embargo', refuerzo: 'Asimismo', secuencia: 'Por su parte' };
         const lista = parseLineas(listas[tipo]);
-        const conector = lista.length ? lista[(bancoSeq[tipo]++) % lista.length] : porDefecto[tipo];
-        juicio = unirConConector(juicio, conector, frase);
+        conector = lista.length ? lista[(bancoSeq[tipo]++) % lista.length] : porDefecto[tipo];
       }
+      seleccion.push({ frase, conector });
       prevNota = nota;
       prevInicio = primeraPalabra(frase);
-      frasesUsadas += 1;
     }
-    if (!frasesUsadas) return null;
+    if (!seleccion.length) return null;
 
-    // Cierre: ausencias → S/N → recomendación (la recomendación liquida).
-    juicio = aplicarAdendumPlataforma(juicio, hayAusencias, cfg.bancoPlataformaAddendum);
-    juicio = aplicarAclaracionSN(juicio, periodData.NoCalificadas || 0, cfg);
+    // Recomendación final según el promedio general (cierra el juicio).
+    let rec = null;
     if (notaGeneral != null) {
       const recBank = parseBancoJuicios(cfg.bancoRecomendaciones || '');
-      const rec = pickBancoJuicioCercano(recBank, notaGeneral);
-      if (rec) {
-        juicio = asegurarPunto(juicio) + ' ' + asegurarPunto(sinConectorInicial(aplicarPlaceholders(rec, notaGeneral, cfg)));
-      }
+      const cand = pickBancoJuicioCercano(recBank, notaGeneral);
+      if (cand) rec = sinConectorInicial(aplicarPlaceholders(cand, notaGeneral, cfg));
     }
+
+    // 2) Composición completa, con cierre en orden ausencias → S/N →
+    //    recomendación. La secuencia NUNCA se recorta por largo máximo:
+    //    el/la docente escribió cada frase a propósito y el juicio se
+    //    escribe entero (el límite de caracteres solo aplica al modo IA).
+    let juicio = '';
+    for (const s of seleccion) {
+      juicio = juicio
+        ? unirConConector(juicio, s.conector, s.frase)
+        : asegurarPunto(sinConectorInicial(s.frase));
+    }
+    juicio = aplicarAdendumPlataforma(juicio, hayAusencias, cfg.bancoPlataformaAddendum);
+    juicio = aplicarAclaracionSN(juicio, periodData.NoCalificadas || 0, cfg);
+    if (rec) juicio = asegurarPunto(juicio) + ' ' + asegurarPunto(rec);
     return pulirRedaccion(juicio);
   }
 
@@ -985,7 +998,10 @@
       // Pulido final para los juicios generados sin IA (los mensajes de
       // error "(sin juicio…)" no pasan por acá porque no marcan via*).
       if (viaBanco || viaPlantilla) text = pulirRedaccion(text);
-      const recortado = recortarProlijo(text, CFG.maxChars);
+      // El largo máximo SOLO recorta al modo IA: los juicios armados desde
+      // el banco o las plantillas son frases que el/la docente escribió a
+      // propósito y se escriben completos, sin límite de caracteres.
+      const recortado = (viaBanco || viaPlantilla) ? text : recortarProlijo(text, CFG.maxChars);
       setNativeValue(row.juicio, recortado);
       fireGxChange(row.juicio);
       juicioCompletado = recortado;
