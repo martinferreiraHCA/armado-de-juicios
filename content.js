@@ -24,7 +24,21 @@
     bancoComponer: true,
     bancoConectoresContraste: 'Sin embargo\nNo obstante\nAun así',
     bancoConectoresRefuerzo: 'Asimismo\nAdemás\nA su vez',
-    bancoNCAddendum: 'Tiene actividades sin calificar que deberá completar para consolidar su proceso.',
+    bancoNCAddendum: 'Ha quedado pendiente la entrega de varias tareas; se necesita contar con más evidencias de su trabajo para valorar mejor su proceso.',
+    // Estructura del banco: 'general' (un solo banco por nota global) o
+    // 'categorias' (secuencia por ítem de la libreta: Orales → Escritas →
+    // O. Act., cada uno con su banco, + recomendación final por promedio).
+    bancoEstructura: 'general',
+    bancoOrales: '',
+    bancoEscritas: '',
+    bancoOtras: '',
+    bancoRecomendaciones: '',
+    bancoConectoresSecuencia: 'Asimismo\nPor su parte\nA su vez\nDel mismo modo',
+    // S/N (sin nota) / N/C: 'mencionar' agrega la aclaración (bancoNCAddendum)
+    // al final del juicio cuando hay al menos snUmbral celdas sin calificar;
+    // 'omitir' no menciona nada.
+    snModo: 'mencionar',
+    snUmbral: 2,
     // Generador por plantillas (sin IA): actividades del período + frases con
     // sintaxis configurable por banda de nota. Placeholders soportados:
     //   {actividad}   → una actividad de la lista (rota entre ellas)
@@ -330,6 +344,17 @@
     return map;
   }
 
+  // ¿Hay algún banco utilizable? El general o, con estructura por categorías,
+  // cualquiera de los bancos por ítem. Lo usan los guards del panel para no
+  // bloquear la secuencia cuando el banco general está vacío.
+  function hayBancoConfigurado(cfg) {
+    if ((cfg.bancoJuicios || '').trim()) return true;
+    if (cfg.bancoEstructura === 'categorias') {
+      return ['bancoOrales', 'bancoEscritas', 'bancoOtras'].some((k) => !!(cfg[k] || '').trim());
+    }
+    return false;
+  }
+
   // Cuenta cuántos usos lleva cada juicio para rotarlos en orden y volver a
   // empezar cuando se agotan. `evitarPalabra` (opcional) desempata entre
   // frases igual de usadas prefiriendo la que NO arranque con esa palabra,
@@ -387,7 +412,7 @@
   // Las frases del banco admiten los mismos placeholders que las plantillas
   // ({actividad}, {actividades}, {conector}, {nota}).
   const BANDA_ORDEN = { plantilla1: 0, plantilla24: 1, plantilla56: 2, plantilla78: 3, plantilla910: 4 };
-  const bancoSeq = { contraste: 0, refuerzo: 0 };
+  const bancoSeq = { contraste: 0, refuerzo: 0, secuencia: 0 };
 
   // --- Helpers de redacción: la concatenación tiene que leer como texto
   // --- escrito por una persona, no como frases pegadas.
@@ -496,7 +521,7 @@
     return mejor;
   }
 
-  function componerJuicioBanco(bank, numeros, ncCount, cfg, notaBase) {
+  function componerJuicioBanco(bank, numeros, cfg, notaBase) {
     if (!bank.size) return null;
     const counts = distribucionNotas(numeros);
     const promedio = calcularPromedio(numeros);
@@ -548,9 +573,83 @@
     }
 
     if (!juicio.trim()) return null;
-    const adendumNC = (cfg.bancoNCAddendum || '').trim();
-    if (ncCount > 0 && adendumNC && !/(n\s*\/?\s*c\b|sin calificar)/i.test(juicio)) {
-      juicio = asegurarPunto(juicio) + ' ' + asegurarPunto(adendumNC);
+    // La aclaración de S/N y el adendum de ausencias los aplica el caller
+    // (procesarFila), así valen para todos los caminos del banco general.
+    return pulirRedaccion(juicio);
+  }
+
+  // Aclaración por tareas sin nota (S/N · N/C): se agrega al final del juicio
+  // solo si el modo es 'mencionar', la cantidad llega al umbral configurado y
+  // el juicio todavía no lo menciona. Con 'omitir' no se dice nada.
+  function aplicarAclaracionSN(juicio, snCount, cfg) {
+    const texto = (cfg.bancoNCAddendum || '').trim();
+    if (cfg.snModo === 'omitir' || !texto) return juicio;
+    if ((snCount || 0) < Math.max(1, cfg.snUmbral || 1)) return juicio;
+    if (/(s\s*\/\s*n\b|n\s*\/\s*c\b|sin calificar|sin nota|tareas? sin entregar|m[aá]s evidencias|pendiente la entrega)/i.test(juicio)) return juicio;
+    return asegurarPunto(juicio) + ' ' + asegurarPunto(texto);
+  }
+
+  // ---------------------------------------------------------------------------
+  // Composición SECUENCIAL por ítem de la libreta (Orales → Escritas → O. Act):
+  // cada ítem con notas aporta una frase de SU banco según el promedio
+  // redondeado de ese ítem, y las frases se encadenan en secuencia con
+  // conectores elegidos comparando niveles entre ítems consecutivos:
+  //   mismo nivel → conector de secuencia; nivel más bajo → contraste;
+  //   nivel más alto → refuerzo. Un ítem sin notas se OMITE (no se inventa).
+  // El juicio cierra con: adendum de ausencias (si hay notas 1), aclaración
+  // de S/N según configuración, y una RECOMENDACIÓN final elegida por el
+  // promedio general del período.
+  function componerJuicioCategorias(cfg, periodData, notaGeneral, hayAusencias) {
+    const categorias = [
+      { nombre: 'Orales', texto: cfg.bancoOrales, notas: notasToNumeros(parseNotas(periodData.Orales)) },
+      { nombre: 'Escritas', texto: cfg.bancoEscritas, notas: notasToNumeros(parseNotas(periodData.Escritos)) },
+      { nombre: 'Otras actuaciones', texto: cfg.bancoOtras, notas: notasToNumeros(parseNotas(periodData.OActividades)) },
+    ];
+    let juicio = '';
+    let prevNota = null;
+    let prevInicio = '';
+    let frasesUsadas = 0;
+    for (const cat of categorias) {
+      if (!cat.notas.length) continue; // ítem sin notas → se omite
+      const bank = parseBancoJuicios(cat.texto || '');
+      if (!bank.size) continue;       // ítem sin banco → no se inventa
+      const prom = calcularPromedio(cat.notas);
+      if (prom == null) continue;
+      const nota = Math.max(1, Math.min(10, Math.round(prom)));
+      const cruda = pickBancoJuicioCercano(bank, nota, prevInicio);
+      if (!cruda) continue;
+      const frase = aplicarPlaceholders(cruda, nota, cfg);
+      if (!juicio) {
+        juicio = asegurarPunto(sinConectorInicial(frase));
+      } else {
+        const bPrev = BANDA_ORDEN[bandaDePlantilla(prevNota)];
+        const bCur = BANDA_ORDEN[bandaDePlantilla(nota)];
+        const tipo = bCur < bPrev ? 'contraste' : bCur > bPrev ? 'refuerzo' : 'secuencia';
+        const listas = {
+          contraste: cfg.bancoConectoresContraste,
+          refuerzo: cfg.bancoConectoresRefuerzo,
+          secuencia: cfg.bancoConectoresSecuencia,
+        };
+        const porDefecto = { contraste: 'Sin embargo', refuerzo: 'Asimismo', secuencia: 'Por su parte' };
+        const lista = parseLineas(listas[tipo]);
+        const conector = lista.length ? lista[(bancoSeq[tipo]++) % lista.length] : porDefecto[tipo];
+        juicio = unirConConector(juicio, conector, frase);
+      }
+      prevNota = nota;
+      prevInicio = primeraPalabra(frase);
+      frasesUsadas += 1;
+    }
+    if (!frasesUsadas) return null;
+
+    // Cierre: ausencias → S/N → recomendación (la recomendación liquida).
+    juicio = aplicarAdendumPlataforma(juicio, hayAusencias, cfg.bancoPlataformaAddendum);
+    juicio = aplicarAclaracionSN(juicio, periodData.NoCalificadas || 0, cfg);
+    if (notaGeneral != null) {
+      const recBank = parseBancoJuicios(cfg.bancoRecomendaciones || '');
+      const rec = pickBancoJuicioCercano(recBank, notaGeneral);
+      if (rec) {
+        juicio = asegurarPunto(juicio) + ' ' + asegurarPunto(sinConectorInicial(aplicarPlaceholders(rec, notaGeneral, cfg)));
+      }
     }
     return pulirRedaccion(juicio);
   }
@@ -729,7 +828,7 @@
       lines.push(`Notas insuficientes (marcadas en SIGED): ${periodData.NotasInsuficientes}`);
     }
     if (periodData.NoCalificadas > 0) {
-      lines.push(`Actividades sin calificar (N/C): ${periodData.NoCalificadas}`);
+      lines.push(`Tareas sin nota / sin calificar (S/N o N/C): ${periodData.NoCalificadas}`);
     }
     if (periodData.InasInjustificadas || periodData.InasJustificadas || periodData.InasFictas) {
       lines.push(`Inasistencias - injustif.: ${periodData.InasInjustificadas || 0}, justif.: ${periodData.InasJustificadas || 0}, fictas: ${periodData.InasFictas || 0}`);
@@ -812,20 +911,36 @@
       if (modo === 'banco' || modo === 'mixto') {
         const bank = parseBancoJuicios(CFG.bancoJuicios || '');
         let candidato = null;
-        // Composición por distribución: cuenta las notas 1-10 y las N/C del
-        // período y concatena frases del banco con conectores. Si está
-        // apagada (o no produce nada) se cae a la selección clásica por
-        // nota redondeada.
-        if (CFG.bancoComponer) {
-          candidato = componerJuicioBanco(bank, numeros, periodData.NoCalificadas || 0, CFG, notaParaBanco);
+        let adendumsListos = false; // la secuencia ya aplica sus adendums
+        // Estructura por categorías: secuencia Orales → Escritas → O. Act.
+        // con recomendación final. Si no produce nada (bancos por ítem
+        // vacíos), se cae a las estrategias del banco general. La secuencia
+        // usa el promedio general CRUDO (escala 1-10) para la recomendación,
+        // igual que las frases por ítem: mezclar la nota prorrateada acá
+        // haría que un juicio "destacado" cierre con la recomendación de una
+        // nota media.
+        if (CFG.bancoEstructura === 'categorias') {
+          const notaGeneralCruda = promedio != null ? Math.round(promedio) : notaParaBanco;
+          candidato = componerJuicioCategorias(CFG, periodData, notaGeneralCruda, hayAusencias);
+          if (candidato) { viaBancoCompuesto = true; adendumsListos = true; }
+        }
+        // Composición por distribución: cuenta las notas 1-10 del período y
+        // concatena frases del banco general con conectores.
+        if (!candidato && CFG.bancoComponer) {
+          candidato = componerJuicioBanco(bank, numeros, CFG, notaParaBanco);
           viaBancoCompuesto = !!candidato;
         }
+        // Selección clásica por nota redondeada.
         if (!candidato && notaParaBanco != null) {
           const c = pickBancoJuicio(bank, notaParaBanco);
           if (c) candidato = sinConectorInicial(aplicarPlaceholders(c, notaParaBanco, CFG));
         }
         if (candidato) {
-          text = aplicarAdendumPlataforma(candidato, hayAusencias, CFG.bancoPlataformaAddendum);
+          if (!adendumsListos) {
+            candidato = aplicarAdendumPlataforma(candidato, hayAusencias, CFG.bancoPlataformaAddendum);
+            candidato = aplicarAclaracionSN(candidato, periodData.NoCalificadas || 0, CFG);
+          }
+          text = candidato;
           viaBanco = true;
         }
       }
@@ -835,6 +950,7 @@
         const generado = generarJuicioPlantilla(notaParaBanco, CFG);
         if (generado) {
           text = aplicarAdendumPlataforma(generado, hayAusencias, CFG.bancoPlataformaAddendum);
+          text = aplicarAclaracionSN(text, periodData.NoCalificadas || 0, CFG);
           viaPlantilla = true;
         }
       }
@@ -952,7 +1068,7 @@
       const total = o + e + a;
       const tag = p.EntregaHabilitada ? ' [HABILITADO]' : '';
       const aviso = p.EntregaHabilitada && total === 0 ? ' ⚠ habilitado pero sin notas detectadas' : '';
-      log(`      ${p.ReuDsc || p.ReuCod}: O=${o} E=${e} A=${a}${p.NoCalificadas ? ` NC=${p.NoCalificadas}` : ''}${p.RendVisible ? ` R=${p.RendVisible}` : ''}${p.NotasInsuficientes ? ` (${p.NotasInsuficientes} insuf.)` : ''}${tag}${aviso}`);
+      log(`      ${p.ReuDsc || p.ReuCod}: O=${o} E=${e} A=${a}${p.NoCalificadas ? ` S/N=${p.NoCalificadas}` : ''}${p.RendVisible ? ` R=${p.RendVisible}` : ''}${p.NotasInsuficientes ? ` (${p.NotasInsuficientes} insuf.)` : ''}${tag}${aviso}`);
     }
 
     for (let i = 0; i < rows.length; i++) {
@@ -1396,11 +1512,11 @@
       for (const s of allSpans) {
         const t = (s.textContent || '').trim();
         if (!t) continue;
-        // "N/C" (no calificado): no es nota numérica pero cuenta para la
-        // composición del juicio y como contexto para la IA.
-        if (/^(n\s*\/\s*c|nc)$/i.test(t)) {
+        // "S/N" (sin nota) o "N/C" (no calificado): no es nota numérica pero
+        // cuenta para la composición del juicio y como contexto para la IA.
+        if (/^(n\s*\/\s*c|s\s*\/\s*n|s\s*\/\s*c|nc|sn)$/i.test(t)) {
           grouped.nc += 1;
-          debugViz.mark(s, debugViz.colors.noteSkip, 'N/C (sin calificar)');
+          debugViz.mark(s, debugViz.colors.noteSkip, `${t} (sin calificar)`);
           continue;
         }
         if (!/^\d{1,2}([.,]\d{1,2})?$/.test(t)) continue;
@@ -2099,7 +2215,7 @@
       const provLabel = (typeof SIGED_PROVIDERS !== 'undefined' && SIGED_PROVIDERS[CFG.provider])
         ? SIGED_PROVIDERS[CFG.provider].label.split(' ')[0]
         : (CFG.provider || 'IA');
-      const tieneBanco = !!(CFG.bancoJuicios || '').trim();
+      const tieneBanco = hayBancoConfigurado(CFG);
       const tienePlantillas = ['plantilla1', 'plantilla24', 'plantilla56', 'plantilla78', 'plantilla910']
         .some((k) => !!(CFG[k] || '').trim());
       const listoIA = !!CFG.apiKey;
@@ -2178,7 +2294,7 @@
         await loadConfig();
         refreshStatus();
         const modoActivo = CFG.modoGeneracion || 'ia';
-        const tieneBancoActivo = !!(CFG.bancoJuicios || '').trim();
+        const tieneBancoActivo = hayBancoConfigurado(CFG);
         if (modoActivo === 'banco' && !tieneBancoActivo) {
           log('Modo "banco" pero el banco está vacío. Pegá los juicios en el ícono de la extensión.');
           return;

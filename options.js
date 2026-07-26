@@ -17,7 +17,15 @@ const DEFAULTS = {
   bancoComponer: true,
   bancoConectoresContraste: 'Sin embargo\nNo obstante\nAun así',
   bancoConectoresRefuerzo: 'Asimismo\nAdemás\nA su vez',
-  bancoNCAddendum: 'Tiene actividades sin calificar que deberá completar para consolidar su proceso.',
+  bancoNCAddendum: 'Ha quedado pendiente la entrega de varias tareas; se necesita contar con más evidencias de su trabajo para valorar mejor su proceso.',
+  bancoEstructura: 'general',
+  bancoOrales: '',
+  bancoEscritas: '',
+  bancoOtras: '',
+  bancoRecomendaciones: '',
+  bancoConectoresSecuencia: 'Asimismo\nPor su parte\nA su vez\nDel mismo modo',
+  snModo: 'mencionar',
+  snUmbral: 2,
   rubrica1: 'No entregó el trabajo o no presentó evidencia (ausencia de producción). Mencionar como entrega pendiente cuando corresponda.',
   rubrica24: 'Producciones insuficientes (notas menores a 5). Reconocer las dificultades pero adoptar tono CONSTRUCTIVO y POSITIVO: subrayar el margen de mejora y los aspectos puntuales a fortalecer; evitar etiquetas desmoralizantes.',
   rubrica56: 'Trabajo satisfactorio: cumple con lo solicitado.',
@@ -38,6 +46,8 @@ const FIELDS = [
   'rendUsarRango', 'rendMin', 'rendMax',
   'modoGeneracion', 'bancoJuicios', 'bancoPlataformaAddendum',
   'bancoComponer', 'bancoConectoresContraste', 'bancoConectoresRefuerzo', 'bancoNCAddendum',
+  'bancoEstructura', 'bancoOrales', 'bancoEscritas', 'bancoOtras', 'bancoRecomendaciones',
+  'bancoConectoresSecuencia', 'snModo', 'snUmbral',
   'rubrica1', 'rubrica24', 'rubrica56', 'rubrica78', 'rubrica910',
   'plantillaActividades', 'plantillaConectores',
   'plantilla1', 'plantilla24', 'plantilla56', 'plantilla78', 'plantilla910',
@@ -195,10 +205,19 @@ function parseBancoJuicios(text) {
   return map;
 }
 
-function refreshBancoCoverage() {
-  const cont = $('bancoCoverage');
+// Chips de cobertura por nota para cualquier textarea con formato de banco.
+const COVERAGE_MAP = [
+  ['bancoJuicios', 'bancoCoverage'],
+  ['bancoOrales', 'covOrales'],
+  ['bancoEscritas', 'covEscritas'],
+  ['bancoOtras', 'covOtras'],
+  ['bancoRecomendaciones', 'covRecomendaciones'],
+];
+
+function renderCoverage(fieldId, contId) {
+  const cont = $(contId);
   if (!cont) return;
-  const bank = parseBancoJuicios(getFieldValue('bancoJuicios'));
+  const bank = parseBancoJuicios(getFieldValue(fieldId));
   cont.innerHTML = '';
   if (![...bank.keys()].length) {
     cont.innerHTML = '<span class="chip">Banco vacío</span>';
@@ -211,6 +230,10 @@ function refreshBancoCoverage() {
     chip.textContent = count ? `Nota ${n} · ${count}` : `Nota ${n} · falta`;
     cont.appendChild(chip);
   }
+}
+
+function refreshBancoCoverage() {
+  for (const [fieldId, contId] of COVERAGE_MAP) renderCoverage(fieldId, contId);
 }
 
 // ---------------------------------------------------------------------------
@@ -295,10 +318,79 @@ function contextoComun() {
   return lines;
 }
 
+// Estilo institucional de los juicios (orientaciones MCN de Ed. Secundaria):
+// descriptivos, en clave de proceso, con niveles de avance y cierre con
+// sugerencias de superación.
+const ESTILO_MCN = [
+  'ESTILO OBLIGATORIO de los juicios (formato institucional MCN):',
+  '- Descriptivos y en clave de PROCESO: qué procesos cognitivos, desempeños y aprendizajes evidencia, y qué competencias desarrolla (especificando cuáles).',
+  '- Usar niveles de avance (destacado, significativo, moderado, escaso, mínimo), siempre en relación con el propio punto de partida del/la estudiante.',
+  '- Reconocer avances y señalar oportunidades de superación en tono constructivo.',
+  '- PROHIBIDO: hablar de «rendimiento», «aceptable / no aceptable», «satisfactorio», «buen alumno», describir solo resultados, o mencionar competencias sin especificar cuáles.',
+  '- Sin etiquetas ni diagnósticos («déficit atencional», «preste atención»); sin lenguaje coloquial; tercera persona singular; ortografía y puntuación impecables.',
+];
+
+function reglasFrasesEncadenables() {
+  return [
+    'IMPORTANTE — la extensión CONCATENA las frases automáticamente, por eso cada frase debe:',
+    '- ser UNA oración completa y autónoma, en tercera persona singular;',
+    '- leer bien tanto al inicio del juicio como después de un conector seguido de coma (se le baja la mayúscula inicial automáticamente);',
+    '- NO empezar con conectores (sin embargo, además, por otra parte, etc.) ni referirse a otra oración;',
+    '- NO mencionar la nota numérica ni la palabra «nota»;',
+    '- variar los inicios entre las variantes de una misma nota (que no empiecen todas con el mismo verbo) y usar verbos de desempeño precisos (identifica, explica, argumenta, elabora, transfiere, produce);',
+    '- redacción fluida y natural, con sintaxis impecable en español rioplatense formal: concordancias correctas, sin muletillas ni frases telegráficas, y cada frase cerrada con punto;',
+    '- opcionalmente puede incluir los placeholders literales {actividad} (una actividad puntual) o {actividades} (todas enumeradas).',
+  ];
+}
+
 function buildPrompt() {
   const tipo = getFieldValue('promptTipo');
   const variantes = Math.max(1, Math.min(10, getFieldValue('promptVariantes') || 3));
   const lines = contextoComun();
+  if (tipo === 'secuencia') {
+    const orales = getFieldValue('promptOrales');
+    const escritas = getFieldValue('promptEscritas');
+    const otras = getFieldValue('promptOtras');
+    lines.push(
+      '',
+      'La libreta tiene tres ítems con notas del 1 al 10: «Orales», «Escritas» y «Otras actuaciones (O. Act.)».',
+      `En este período, «Orales» evaluó: ${orales || 'participación en clase, aportes e intercambios orales'}.`,
+      `«Escritas» evaluó: ${escritas || 'producciones y evaluaciones escritas'}.`,
+      `«Otras actuaciones» evaluó: ${otras || 'tareas, proyectos, actitudes y trabajo en clase'}.`,
+      '',
+      'TAREA (dos pasos):',
+      'PASO 1 — CRITERIOS: a partir de los contenidos dictados y de lo que se quiere evaluar, definí (para vos, sin escribirlo en la salida) qué demuestra un/a estudiante en cada ítem para cada nivel: nota 1 (ausencia / no entrega), 2 a 4 (en proceso), 5 a 6 (avance moderado), 7 a 8 (avance significativo), 9 a 10 (avance destacado).',
+      `PASO 2 — BANCOS: escribí, para CADA uno de los tres ítems, un banco de frases para TODAS las notas del 1 al 10 con ${Math.max(3, variantes)} variantes por nota, donde cada frase hable del desempeño en ESE ítem (lo oral en Orales, lo escrito en Escritas, tareas/actitudes en O. Act.), graduada según el criterio del nivel. Escribí además un cuarto banco de RECOMENDACIONES para las notas 1 a 10 (${Math.max(3, variantes)} variantes por nota): una sugerencia u oportunidad de superación que CIERRA el juicio («Continúe trabajando…», «Se sugiere que…», «Es preciso que…», «Confíe en su potencial y…»), acorde al nivel del promedio.`,
+      '',
+      ...ESTILO_MCN,
+      '',
+      ...reglasFrasesEncadenables(),
+      '',
+      'FORMATO DE SALIDA (exacto, texto plano, sin markdown, sin numeración, sin comillas):',
+      'ORALES',
+      'Nota 1',
+      '<frase variante 1>',
+      '<frase variante 2>',
+      '…',
+      'Nota 2',
+      '…',
+      '(y así hasta Nota 10)',
+      'ESCRITAS',
+      'Nota 1',
+      '…',
+      '(y así hasta Nota 10)',
+      'OTRAS',
+      'Nota 1',
+      '…',
+      '(y así hasta Nota 10)',
+      'RECOMENDACIONES',
+      'Nota 1',
+      '…',
+      '(y así hasta Nota 10)',
+      'No agregues ningún texto antes ni después.',
+    );
+    return lines.join('\n');
+  }
   if (tipo === 'logro') {
     lines.push(
       '',
@@ -306,15 +398,12 @@ function buildPrompt() {
       'PASO 1 — RÚBRICA: a partir de los contenidos dictados y de lo que el/la docente quiere evaluar, definí el CRITERIO DE LOGRO de cada banda de notas: qué demuestra concretamente un/a estudiante de esa banda respecto de esos contenidos y criterios. Bandas: nota 1 (ausencia / no entrega), 2 a 4 (en proceso, con margen de mejora), 5 a 6 (satisfactorio), 7 a 8 (muy bueno), 9 a 10 (destacado).',
       `PASO 2 — BANCO: escribí un banco de juicios para TODAS las notas del 1 al 10, con ${variantes} variantes distintas por nota, donde cada frase refleje el criterio de logro de su banda aplicado a los contenidos dictados (graduá dentro de la banda: un 4 muestra más avance que un 2, un 10 más que un 9).`,
       '',
-      'IMPORTANTE — la extensión COMPONE el juicio automáticamente según la distribución de notas del/la estudiante: elige una frase por su nota más frecuente y, si el desempeño es dispar, encadena una segunda frase de otra banda unida con un conector («Sin embargo, …», «Asimismo, …»). Por eso cada frase del banco debe:',
-      '- ser UNA oración completa y autónoma, en tercera persona;',
-      '- leer bien tanto al inicio del juicio como después de un conector seguido de coma (se le baja la mayúscula inicial automáticamente);',
-      '- NO empezar con conectores (sin embargo, además, por otra parte, etc.) ni referirse a otra oración;',
-      '- NO mencionar la nota numérica ni la palabra «nota»;',
-      '- nombrar contenidos o desempeños concretos, no generalidades;',
-      '- variar los inicios entre las variantes de una misma nota (que no empiecen todas con el mismo verbo) y usar verbos de desempeño precisos (identifica, explica, argumenta, elabora, transfiere, produce);',
-      '- redacción fluida y natural, con sintaxis impecable en español rioplatense formal: concordancias correctas, sin muletillas ni frases telegráficas, y cada frase cerrada con punto;',
-      '- opcionalmente puede incluir los placeholders literales {actividad} (una actividad puntual) o {actividades} (todas enumeradas).',
+      'La extensión COMPONE el juicio automáticamente según la distribución de notas del/la estudiante: elige una frase por su nota más frecuente y, si el desempeño es dispar, encadena una segunda frase de otra banda unida con un conector («Sin embargo, …», «Asimismo, …»).',
+      '',
+      ...ESTILO_MCN,
+      '- Nombrar contenidos o desempeños concretos, no generalidades.',
+      '',
+      ...reglasFrasesEncadenables(),
       '',
       'FORMATO DE SALIDA (exacto, texto plano, sin markdown, sin numeración, sin comillas):',
       'RUBRICA',
@@ -386,6 +475,30 @@ function buildPrompt() {
   return lines.join('\n');
 }
 
+// ---------------------------------------------------------------------------
+// Limpieza de respuestas de IA pegadas: quita markdown (títulos, negritas,
+// viñetas) y descarta líneas de "charla" del chatbot (cierres tipo «Espero que
+// te resulten útiles», preguntas al usuario) que no son frases de banco. Se
+// aplica ANTES de parsear y también a lo que se guarda, así el parser estricto
+// de content.js encuentra las líneas «Nota N» aunque la IA haya usado markdown.
+const CHARLA_IA_RE = /(espero que|te (resulten|sirvan|sean [uú]tiles|ayuden)|me avis[aá]s|avisame|av[ií]same|h[aá]zmelo saber|hazme saber|si (necesit[aá]s|quer[eé]s|precis[aá]s|dese[aá]s)|¡?[eé]xitos|suerte con|aqu[ií] (tienes|ten[eé]s)|a continuaci[oó]n)/i;
+
+function limpiarLineaIA(raw) {
+  return String(raw)
+    .replace(/^[\s>]*[*#-]+\s*/, '') // viñetas y títulos markdown
+    .replace(/[*`]/g, '')            // negritas / itálicas / código
+    .replace(/__/g, '')
+    .trimEnd();
+}
+
+function limpiarRespuestaIA(texto) {
+  return String(texto || '')
+    .split(/\r?\n/)
+    .map(limpiarLineaIA)
+    .filter((l) => !CHARLA_IA_RE.test(l) && !/\?\s*$/.test(l))
+    .join('\n');
+}
+
 // Parsea líneas «Nota 1: …» / «Notas 2 a 4: …» y las carga en los campos de
 // la rúbrica. Devuelve cuántas bandas reconoció.
 function parsearRubricaEnCampos(texto) {
@@ -409,9 +522,64 @@ function parsearRubricaEnCampos(texto) {
 
 function aplicarRespuesta() {
   const tipo = getFieldValue('promptTipo');
-  const texto = getFieldValue('respuestaIA');
+  const texto = limpiarRespuestaIA(getFieldValue('respuestaIA'));
   const st = $('respuestaStatus');
-  if (!texto) { showStatus(st, '⚠ Pegá primero la respuesta de la IA.', 'err'); return; }
+  if (!texto.trim()) { showStatus(st, '⚠ Pegá primero la respuesta de la IA.', 'err'); return; }
+
+  if (tipo === 'secuencia') {
+    // La respuesta trae cuatro secciones (ORALES, ESCRITAS, OTRAS y
+    // RECOMENDACIONES), cada una con bloques «Nota N».
+    const secciones = { orales: [], escritas: [], otras: [], recomendaciones: [] };
+    const headers = [
+      [/^orales?$/i, 'orales'],
+      [/^escrit[ao]s?$/i, 'escritas'],
+      [/^(otras(\s+actuaciones)?|o\.?\s*act(uaciones)?\.?)$/i, 'otras'],
+      [/^recomendaci[oó]n(es)?(\s+finales?)?$/i, 'recomendaciones'],
+    ];
+    let actual = null;
+    for (const raw of texto.split(/\r?\n/)) {
+      // Para detectar headers toleramos decoraciones, dos puntos y paréntesis
+      // finales: «ORALES:», «OTRAS ACTUACIONES (O. ACT.)», «Recomendaciones
+      // finales», etc.
+      const limpia = raw.replace(/^[*#>\s=-]+/, '').replace(/[*#\s=-]+$/, '')
+        .replace(/\s*\([^)]*\)\s*$/, '').replace(/[:.\s]+$/, '').trim();
+      const header = headers.find(([re]) => re.test(limpia));
+      if (header) { actual = header[1]; continue; }
+      // Línea corta toda en mayúsculas que no es «Nota N»: un encabezado que
+      // no reconocemos. Cortamos la sección para no contaminar el banco
+      // anterior con frases ajenas (el faltante se reporta en el estado).
+      if (limpia && limpia.length <= 40 && !/\d/.test(limpia)
+          && limpia === limpia.toUpperCase() && /[A-ZÁÉÍÓÚÑ]/.test(limpia)) {
+        actual = null;
+        continue;
+      }
+      if (actual) secciones[actual].push(raw);
+    }
+    const campos = { orales: 'bancoOrales', escritas: 'bancoEscritas', otras: 'bancoOtras', recomendaciones: 'bancoRecomendaciones' };
+    const resumen = [];
+    const problemas = [];
+    let algo = false;
+    for (const [sec, campo] of Object.entries(campos)) {
+      const cuerpo = secciones[sec].join('\n').trim();
+      const bank = parseBancoJuicios(cuerpo);
+      const notas = [...bank.keys()];
+      if (!notas.length) { problemas.push(`la sección ${sec.toUpperCase()} está vacía o sin líneas «Nota N»`); continue; }
+      setFieldValue(campo, cuerpo);
+      algo = true;
+      const faltan = [];
+      for (let n = 1; n <= 10; n++) if (!bank.has(n)) faltan.push(n);
+      resumen.push(`${sec} ${notas.length}/10`);
+      if (faltan.length) problemas.push(`en ${sec} faltan las notas ${faltan.join(', ')}`);
+    }
+    if (!algo) {
+      showStatus(st, '⚠ No encontré las secciones ORALES / ESCRITAS / OTRAS / RECOMENDACIONES. Revisá que la IA haya respetado el formato.', 'err');
+      return;
+    }
+    setFieldValue('bancoEstructura', 'categorias');
+    refreshBancoCoverage();
+    showStatus(st, `✓ Bancos cargados (${resumen.join(' · ')}) y estructura «Secuencia por ítem» activada.${problemas.length ? ' ⚠ ' + problemas.join('; ') + '.' : ''} Revisá la pestaña Banco y apretá «Guardar configuración».`, problemas.length ? 'err' : 'ok');
+    return;
+  }
 
   if (tipo === 'logro') {
     // La respuesta trae dos secciones: RUBRICA y BANCO, separadas por una
@@ -642,6 +810,7 @@ async function save() {
   if (!cfg.tone) cfg.tone = DEFAULTS.tone;
   cfg.rendMin = Math.max(1, Math.min(10, cfg.rendMin || DEFAULTS.rendMin));
   cfg.rendMax = Math.max(1, Math.min(10, cfg.rendMax || DEFAULTS.rendMax));
+  cfg.snUmbral = Math.max(1, Math.min(20, cfg.snUmbral || DEFAULTS.snUmbral));
   const st = $('status');
   if (cfg.rendMin >= cfg.rendMax && cfg.rendUsarRango) {
     cfg.rendUsarRango = false;
@@ -656,7 +825,9 @@ async function save() {
 
   const modo = cfg.modoGeneracion || 'ia';
   const necesitaIA = modo === 'ia' || modo === 'mixto';
-  const tieneBanco = !!(cfg.bancoJuicios || '').trim();
+  const tieneBanco = !!(cfg.bancoJuicios || '').trim()
+    || (cfg.bancoEstructura === 'categorias'
+        && ['bancoOrales', 'bancoEscritas', 'bancoOtras'].some((k) => !!(cfg[k] || '').trim()));
   const tienePlantillas = PLANTILLA_BANDAS.some((k) => !!(cfg[k] || '').trim());
   const faltaIA = necesitaIA && !cfg.apiKey;
   const faltaBanco = (modo === 'banco' || modo === 'mixto') && !tieneBanco;
@@ -702,7 +873,10 @@ document.addEventListener('DOMContentLoaded', async () => {
     radio.addEventListener('change', refreshModoHint);
   }
 
-  $('bancoJuicios').addEventListener('input', refreshBancoCoverage);
+  for (const [fieldId, contId] of COVERAGE_MAP) {
+    const el = $(fieldId);
+    if (el) el.addEventListener('input', () => renderCoverage(fieldId, contId));
+  }
   $('previewPlantillas').addEventListener('click', previewPlantillas);
 
   $('generarPrompt').addEventListener('click', () => {
