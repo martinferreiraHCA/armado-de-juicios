@@ -39,29 +39,46 @@ Se abre una página de opciones a pantalla completa con pestañas:
   como «X, Y y Z»), `{conector}` (rota entre conectores) y `{nota}`.
   Botón «Ver ejemplos generados» para previsualizar.
 - **🗂️ Banco de juicios** — con chips de cobertura por nota (verde = tiene
-  variantes, rojo = falta). Incluye **composición según la distribución de
-  notas**: en vez de mirar solo el promedio, cuenta cuántas notas de cada
-  valor (1 a 10) y cuántas N/C tiene el período y concatena frases del
-  banco con conectores. La nota principal es la más repetida (moda; empate
-  → la más cercana al promedio); si otra banda (2-4, 5-6, 7-8, 9-10)
-  concentra al menos 2 notas o el 25% del total se agrega una frase
-  secundaria unida con un conector de contraste («Sin embargo, …») o de
-  refuerzo («Asimismo, …»). Las ausencias (nota 1) se cubren con el adendum
-  de entregas pendientes y las N/C con un adendum propio. Las frases del
-  banco admiten los mismos placeholders que las plantillas.
+  variantes, rojo = falta) y dos estructuras:
+  - **Secuencia por ítem** (Orales → Escritas → O. Act.): cada columna de
+    la libreta con notas aporta una frase de su propio banco según el
+    promedio de ese ítem; las frases se encadenan con conectores elegidos
+    por cómo evoluciona el nivel entre ítems (baja → contraste «Sin
+    embargo, …»; sube → refuerzo «Asimismo, …»; se mantiene → secuencia
+    «Por su parte, …»). Un ítem sin notas se omite. El juicio cierra con
+    la aclaración de S/N (configurable: mencionar si se llega a un umbral
+    —por defecto 2 celdas sin nota—, u omitir) y una **recomendación
+    final** elegida según el promedio general del período.
+  - **Banco general** con **composición según la distribución de notas**:
+    cuenta cuántas notas de cada valor (1 a 10) tiene el período y
+    concatena frases del banco con conectores. La nota principal es la más
+    repetida (moda; empate → la más cercana al promedio); si otra banda
+    (2-4, 5-6, 7-8, 9-10) concentra al menos 2 notas o el 25% del total se
+    agrega una frase secundaria unida con conector de contraste o refuerzo.
+  Las ausencias (nota 1) se cubren con el adendum de entregas pendientes;
+  las celdas S/N o N/C se cuentan y disparan la aclaración configurada.
+  Las frases de todos los bancos admiten los mismos placeholders que las
+  plantillas.
 - **✨ Asistente de prompts (sin API)** — genera un prompt listo para pegar
   en cualquier IA gratuita (ChatGPT, Gemini, Claude web…) que produce el
   banco completo, la rúbrica o las frases de plantillas; pegás la respuesta
   de vuelta y se carga sola en la configuración. Sin API key ni costos.
-  El modo **«Banco + rúbrica desde mis criterios de logro»** parte de dos
-  campos redactados por el/la docente — *lo que diste en el período*
-  (contenidos) y *lo que querés evaluar* (criterios de logro) — y genera un
-  prompt de dos pasos: primero la IA define el criterio de logro de cada
-  banda de notas y después escribe el banco completo con frases pensadas
-  para la composición automática (oraciones autónomas, sin conectores
-  iniciales, que leen bien solas o encadenadas con «Sin embargo, …» /
-  «Asimismo, …»). Al pegar la respuesta se cargan la rúbrica y el banco de
-  una sola vez.
+  El modo **«Secuencia por ítem»** parte de lo que redacta el/la docente —
+  *lo que diste en el período*, *lo que querés evaluar* y qué significó
+  cada ítem de la libreta (Orales / Escritas / O. Act.) — y genera un
+  prompt que produce los tres bancos por ítem más las recomendaciones
+  finales, con varias variantes por nota, en el estilo institucional MCN
+  (juicios descriptivos, en clave de proceso, con niveles de avance —
+  destacado, significativo, moderado, escaso, mínimo—, competencias
+  especificadas y cierre con sugerencias de superación; sin «rendimiento»,
+  «satisfactorio» ni etiquetas). Al pegar la respuesta se cargan los cuatro
+  bancos de una sola vez y se activa la estructura de secuencia.
+  El modo **«Banco + rúbrica desde mis criterios de logro»** hace lo mismo
+  para el banco general: la IA define el criterio de logro de cada banda de
+  notas y escribe el banco completo con frases pensadas para la composición
+  automática (oraciones autónomas, sin conectores iniciales, que leen bien
+  solas o encadenadas con «Sin embargo, …» / «Asimismo, …»); al pegar la
+  respuesta se cargan la rúbrica y el banco de una sola vez.
 - **📊 Rúbrica** — qué significa cada rango de notas (instrucción
   obligatoria para el modo IA).
 - **🎨 Estilo y Rend.** — tono, largo máximo, contraste con períodos

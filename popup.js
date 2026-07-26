@@ -21,7 +21,10 @@ async function pintarEstado() {
   let modo = cfg.modoGeneracion;
   if (!['ia', 'banco', 'plantilla', 'mixto'].includes(modo)) modo = 'ia';
 
-  const tieneBanco = !!(cfg.bancoJuicios || '').trim();
+  // Banco general o, con estructura por categorías, algún banco por ítem.
+  const tieneBanco = !!(cfg.bancoJuicios || '').trim()
+    || (cfg.bancoEstructura === 'categorias'
+        && ['bancoOrales', 'bancoEscritas', 'bancoOtras'].some((k) => !!(cfg[k] || '').trim()));
   const tienePlantillas = PLANTILLA_BANDAS.some((k) => !!(cfg[k] || '').trim());
   const perProvider = cfg.siged_provider_keys || {};
   const provider = cfg.provider || 'anthropic';

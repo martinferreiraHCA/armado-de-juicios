@@ -187,37 +187,101 @@
     <!-- ============ BANCO ============ -->
     <section class="tab" data-tab="banco">
       <h1>Banco de juicios</h1>
-      <p class="subtitle">Juicios ya escritos, elegidos según la nota redondeada del alumno. Formato: una línea <code>Nota N</code> seguida de uno o más juicios (uno por línea).</p>
+      <p class="subtitle">Juicios ya escritos por vos, elegidos según las notas del alumno. Formato en todos los bancos: una línea <code>Nota N</code> seguida de una o más frases (una por línea).</p>
+
       <div class="card">
+        <h2>Estructura del banco</h2>
+        <label>¿Cómo se arma el juicio?
+          <select id="bancoEstructura">
+            <option value="general">Banco general — frases según la nota global del período</option>
+            <option value="categorias">Secuencia por ítem — Orales → Escritas → O. Act. + recomendación final</option>
+          </select>
+        </label>
+        <p class="hint">En la <b>secuencia por ítem</b>, cada columna de la libreta con notas aporta una frase de su propio banco según el promedio de ese ítem, encadenadas con conectores según cómo evoluciona el nivel entre ítems (baja → contraste «Sin embargo, …»; sube → refuerzo «Asimismo, …»; se mantiene → secuencia «Por su parte, …»). <b>Un ítem sin notas se omite.</b> El juicio cierra con la aclaración de S/N (si corresponde) y una <b>recomendación final</b> elegida según el promedio general. Si los bancos por ítem están vacíos, se usa el banco general como respaldo.</p>
+      </div>
+
+      <div class="card">
+        <h2>Bancos por ítem (secuencia)</h2>
+        <p class="desc">Tres o cuatro frases por nota en cada ítem hacen que las concatenaciones tengan sentido y no se repitan entre alumnos. Generalos con el ✨ Asistente de prompts (tipo «Secuencia por ítem»).</p>
+        <label>Orales <span class="lbl-hint">(participación, aportes, comunicación oral)</span>
+          <textarea id="bancoOrales" rows="8" placeholder="Nota 7&#10;Realiza aportes pertinentes en los intercambios orales, que enriquecen la discusión del grupo…"></textarea>
+        </label>
+        <div class="chips" id="covOrales"></div>
+        <label style="margin-top:12px">Escritas <span class="lbl-hint">(producciones y evaluaciones escritas)</span>
+          <textarea id="bancoEscritas" rows="8" placeholder="Nota 7&#10;Sus producciones escritas evidencian un avance significativo en la organización de las ideas…"></textarea>
+        </label>
+        <div class="chips" id="covEscritas"></div>
+        <label style="margin-top:12px">Otras actuaciones <span class="lbl-hint">(tareas, proyectos, actitudes, trabajo en clase)</span>
+          <textarea id="bancoOtras" rows="8" placeholder="Nota 7&#10;Cumple con las tareas asignadas demostrando responsabilidad y constancia…"></textarea>
+        </label>
+        <div class="chips" id="covOtras"></div>
+      </div>
+
+      <div class="card">
+        <h2>Recomendación final</h2>
+        <p class="desc">Cierra el juicio; se elige según el promedio general del período. Redactala como sugerencia u oportunidad de superación («Continúe trabajando…», «Se sugiere que…», «Confíe en su potencial…»).</p>
+        <textarea id="bancoRecomendaciones" rows="8" placeholder="Nota 5&#10;Se sugiere que sostenga el trabajo diario y se anime a consultar para consolidar su proceso.&#10;&#10;Nota 9&#10;Continúe trabajando con la misma disposición y compromiso."></textarea>
+        <div class="chips" id="covRecomendaciones"></div>
+      </div>
+
+      <div class="card">
+        <h2>Banco general</h2>
+        <p class="desc">Un solo banco por nota global. Es la estructura clásica y el respaldo cuando los bancos por ítem están vacíos.</p>
         <label>Juicios por nota
-          <textarea id="bancoJuicios" rows="14" placeholder="Nota 4&#10;Reconoce aspectos básicos de los temas trabajados…&#10;Explora los contenidos con apoyo docente…&#10;&#10;Nota 5&#10;Comprende los aspectos iniciales de la propuesta…"></textarea>
+          <textarea id="bancoJuicios" rows="12" placeholder="Nota 4&#10;Reconoce aspectos básicos de los temas trabajados…&#10;Explora los contenidos con apoyo docente…&#10;&#10;Nota 5&#10;Comprende los aspectos iniciales de la propuesta…"></textarea>
         </label>
         <div class="chips" id="bancoCoverage"></div>
-        <p class="hint">💡 ¿No querés escribirlos a mano? Usá el <b>✨ Asistente de prompts</b> para que una IA gratuita te genere el banco completo y pegalo acá. Las frases del banco admiten los placeholders <code>{actividad}</code>, <code>{actividades}</code>, <code>{conector}</code> y <code>{nota}</code> (se completan con las actividades y conectores del Generador de plantillas).</p>
+        <p class="hint">💡 Todas las frases de todos los bancos admiten los placeholders <code>{actividad}</code>, <code>{actividades}</code>, <code>{conector}</code> y <code>{nota}</code> (se completan con las actividades y conectores del Generador de plantillas).</p>
       </div>
+
       <div class="card">
         <h2>Composición según la distribución de notas</h2>
-        <p class="desc">En vez de mirar solo el promedio, la extensión cuenta cuántas notas de cada valor (1 a 10) y cuántas N/C tiene el período, y arma un juicio personalizado concatenando frases del banco con conectores.</p>
+        <p class="desc">Aplica al banco general: en vez de mirar solo el promedio, cuenta cuántas notas de cada valor (1 a 10) tiene el período y arma el juicio concatenando frases con conectores.</p>
         <label class="check">
           <input type="checkbox" id="bancoComponer">
           Componer el juicio según la prevalencia de notas
         </label>
-        <p class="hint">Criterios: la <b>nota principal</b> es la más repetida (moda; empate → la más cercana al promedio, y luego la más alta). Si otra banda (2-4, 5-6, 7-8 o 9-10) concentra al menos 2 notas o el 25% del total, se agrega una <b>frase secundaria</b> del banco para esa banda, unida con un conector de contraste (si es más baja) o de refuerzo (si es más alta). Las notas 1 (ausencias) se cubren con el adendum de entregas pendientes, y las N/C con su propio adendum. Con el prorrateo de Rend activo, la nota principal es la nota prorrateada para no contradecir el boletín.</p>
+        <p class="hint">Criterios: la <b>nota principal</b> es la más repetida (moda; empate → la más cercana al promedio, y luego la más alta). Si otra banda (2-4, 5-6, 7-8 o 9-10) concentra al menos 2 notas o el 25% del total, se agrega una <b>frase secundaria</b> del banco para esa banda, unida con un conector de contraste (si es más baja) o de refuerzo (si es más alta). Las notas 1 (ausencias) se cubren con el adendum de entregas pendientes. Con el prorrateo de Rend activo, la nota principal es la prorrateada para no contradecir el boletín.</p>
+      </div>
+
+      <div class="card">
+        <h2>Conectores para encadenar frases</h2>
+        <p class="desc">Rotan entre alumnos para que los juicios no queden idénticos. Uno por línea.</p>
         <div class="row">
-          <label>Conectores de contraste <span class="lbl-hint">(cuando la frase secundaria es más baja; uno por línea)</span>
+          <label>De contraste <span class="lbl-hint">(el nivel baja)</span>
             <textarea id="bancoConectoresContraste" rows="3"></textarea>
           </label>
-          <label>Conectores de refuerzo <span class="lbl-hint">(cuando es más alta; uno por línea)</span>
+          <label>De refuerzo <span class="lbl-hint">(el nivel sube)</span>
             <textarea id="bancoConectoresRefuerzo" rows="3"></textarea>
           </label>
+          <label>De secuencia <span class="lbl-hint">(el nivel se mantiene)</span>
+            <textarea id="bancoConectoresSecuencia" rows="3"></textarea>
+          </label>
         </div>
-        <label>Adendum para notas N/C <span class="lbl-hint">(se agrega al final si el período tiene actividades sin calificar)</span>
+      </div>
+
+      <div class="card">
+        <h2>Tareas sin nota (S/N · N/C)</h2>
+        <p class="desc">Qué hacer cuando la libreta tiene celdas S/N (sin nota) o N/C (no calificado). La aclaración va al final del juicio, antes de la recomendación.</p>
+        <div class="row">
+          <label>Comportamiento
+            <select id="snModo">
+              <option value="mencionar">Aclarar en el juicio si hay muchas</option>
+              <option value="omitir">Omitir — no mencionar nada</option>
+            </select>
+          </label>
+          <label>¿Cuántas S/N se consideran «muchas»?
+            <input type="number" id="snUmbral" min="1" max="20" step="1">
+          </label>
+        </div>
+        <label>Texto de la aclaración
           <input type="text" id="bancoNCAddendum">
         </label>
       </div>
+
       <div class="card">
         <h2>Adendum de entregas pendientes</h2>
-        <p class="desc">Se agrega al final del juicio solo cuando el alumno tiene notas 1 (ausencias) y el juicio no las menciona. Vale para banco y plantillas.</p>
+        <p class="desc">Se agrega cuando el alumno tiene notas 1 (ausencias) y el juicio no las menciona. Vale para banco y plantillas.</p>
         <input type="text" id="bancoPlataformaAddendum">
       </div>
     </section>
@@ -232,6 +296,7 @@
         <div class="row">
           <label>¿Qué querés generar?
             <select id="promptTipo">
+              <option value="secuencia">Secuencia por ítem: bancos Orales / Escritas / O. Act. + recomendaciones</option>
               <option value="logro">Banco + rúbrica desde mis criterios de logro</option>
               <option value="banco">Banco de juicios completo (notas 1 a 10)</option>
               <option value="rubrica">Descripciones de la rúbrica (5 bandas)</option>
@@ -256,10 +321,21 @@
         <label>Lo que querés evaluar <span class="lbl-hint">(criterios de logro: qué esperás que demuestren)</span>
           <textarea id="promptCriterios" rows="3" placeholder="Que identifiquen los planetas y sus características&#10;Que expliquen los cambios de estado con ejemplos cotidianos"></textarea>
         </label>
+        <div class="row">
+          <label>Qué evaluaste en «Orales» <span class="lbl-hint">(para la secuencia por ítem)</span>
+            <input type="text" id="promptOrales" placeholder="participación en clase, exposiciones, defensa oral de trabajos">
+          </label>
+          <label>Qué evaluaste en «Escritas»
+            <input type="text" id="promptEscritas" placeholder="evaluaciones escritas, informes de laboratorio">
+          </label>
+          <label>Qué evaluaste en «O. Act.»
+            <input type="text" id="promptOtras" placeholder="tareas en plataforma, trabajo en equipo, carpeta">
+          </label>
+        </div>
         <label>Actividades del período <span class="lbl-hint">(opcional, una por línea — le da contexto a la IA)</span>
           <textarea id="promptActividades" rows="3"></textarea>
         </label>
-        <p class="hint" id="tipoLogroHint">Con «Banco + rúbrica desde mis criterios de logro» la IA primero define el criterio de logro de cada banda de notas a partir de lo que diste y lo que querés evaluar, y después escribe el banco completo con frases pensadas para la composición automática (frases autónomas que leen bien solas o encadenadas con conectores). Al pegar la respuesta se cargan la rúbrica y el banco de una sola vez.</p>
+        <p class="hint" id="tipoLogroHint">Con «Secuencia por ítem» la IA primero define los criterios de logro de cada ítem de la libreta a partir de lo que diste y lo que querés evaluar, y después genera los tres bancos (Orales, Escritas, O. Act.) más las recomendaciones finales, con varias variantes por nota, en el estilo institucional (descriptivos, en clave de proceso, con niveles de avance y cierre con sugerencias). Al pegar la respuesta se cargan los cuatro bancos de una sola vez y se activa la estructura de secuencia.</p>
         <button class="btn" id="generarPrompt">Generar prompt</button>
         <label style="margin-top:14px">Prompt generado
           <textarea id="promptResultado" rows="10" readonly placeholder="Apretá «Generar prompt» y después copialo…"></textarea>
