@@ -9,9 +9,15 @@
     provider: 'anthropic',
     apiKey: '',
     model: 'claude-sonnet-4-5',
-    maxChars: 280,
-    tone: 'Profesional, claro, conciso, en español rioplatense. Siempre en TERCERA PERSONA refiriéndose al/la estudiante (nunca "vos", "tú" ni "usted"). Evitar adjetivos exagerados y opiniones sobre la familia.',
+    maxChars: 450,
+    tone: 'Cercano y formativo, como lo escribiría el/la docente para la familia: claro, honesto, sin frases hechas ni tono burocrático.',
     compararConAnterior: true,
+    // Contexto del período para el modo IA: lo trabajado (apertura del
+    // juicio) y qué evaluó cada ítem de la libreta (para leer las notas).
+    iaContenidos: '',
+    iaOrales: '',
+    iaEscritas: '',
+    iaOtras: '',
     rendUsarRango: false,
     rendMin: 4,
     rendMax: 7,
@@ -750,61 +756,123 @@
     return partes.join('; ') + '.';
   }
 
+  // Frases que delatan texto automático. Se le prohíben a la IA y, como red
+  // de seguridad, se registran en el log si aparecen igual.
+  const MULETILLAS_IA = [
+    'cabe destacar', 'cabe señalar', 'es importante mencionar', 'es importante destacar', 'en conclusión',
+    'en resumen', 'sin duda', 'a lo largo de', 'en el marco de', 'demuestra un gran compromiso',
+    'continuar en esta línea', 'seguir avanzando en este camino', 'desplegar su potencial', 'en este sentido',
+    'de cara a', 'es fundamental', 'resulta fundamental', 'juega un papel', 'un rol clave', 'de manera integral',
+  ];
+
+  // Aperturas de los juicios ya generados por IA en esta sesión. Se le pasan
+  // a la IA para que no arranque igual con dos estudiantes del mismo grupo
+  // (el modelo no tiene memoria entre llamadas).
+  const iaAperturasUsadas = [];
+  function registrarApertura(texto) {
+    const primera = String(texto || '').trim().split(/(?<=[.!?])\s+/)[0] || '';
+    const corta = primera.length > 110 ? primera.slice(0, 110).replace(/\s+\S*$/, '') + '…' : primera;
+    if (!corta) return;
+    if (!iaAperturasUsadas.includes(corta)) iaAperturasUsadas.push(corta);
+    if (iaAperturasUsadas.length > 40) iaAperturasUsadas.shift();
+  }
+
   function buildSystemPrompt(cfg) {
+    const max = cfg.maxChars;
+    const min = Math.round(max * 0.6);
     const lines = [
-      'Sos un asistente que ayuda a docentes uruguayos a redactar juicios de evaluación para boletines escolares (SIGED).',
-      'REGLA OBLIGATORIA: el juicio se redacta SIEMPRE en tercera persona, refiriéndose al/la estudiante (por ejemplo: "demuestra", "presenta dificultades", "logra"). Nunca uses segunda persona ("vos", "tú", "usted") ni primera persona.',
-      'NUNCA menciones el NOMBRE del/la estudiante dentro del juicio. El nombre se te pasa solo como contexto interno; el texto generado debe ser válido sin él (usá "el/la estudiante" o reformulá la oración).',
-      'No uses emojis ni signos de exclamación múltiples. No emitas juicios sobre la familia. Respetá la privacidad.',
-      'No inventes datos: usá únicamente la información provista. No menciones nombres de tareas concretas si no se pasan.',
-      'Sé breve y concreto: una o dos oraciones bastan.',
-      'RÚBRICA OBLIGATORIA al interpretar las notas (definida por el/la docente):',
-      `  • Nota 1 (ausencia / no entrega): ${cfg.rubrica1}`,
-      `  • Notas 2 a 4 (insuficientes, < 5 estricto): ${cfg.rubrica24}`,
-      `  • Notas 5 a 6: ${cfg.rubrica56}`,
-      `  • Notas 7 a 8: ${cfg.rubrica78}`,
-      `  • Notas 9 a 10: ${cfg.rubrica910}`,
-      'Distinción importante: NO confundas "1" (ausencia) con "2-4" (insuficiencia con margen de mejora). El 1 indica que no hubo evidencia/producción; el 2-4 indica que sí hubo producción pero por debajo de lo esperado.',
-      'Cuando haya notas 2-4 redactá en tono CONSTRUCTIVO y POSITIVO: reconocer la dificultad, pero centrarse en el margen de mejora y aspectos a fortalecer. Evitá etiquetas desmoralizantes ("mal", "muy bajo", "preocupante").',
-      'Si conviven notas en distintos rangos, equilibrá lo positivo con lo a mejorar (por ejemplo: "logra X, aunque debe profundizar en Y").',
+      'Sos el/la docente de la asignatura y estás escribiendo el juicio del boletín de un/a estudiante concreto/a. Lo van a leer el/la estudiante y su familia. Escribí como una persona que conoce al grupo y quiere ayudar a que ese/a estudiante siga aprendiendo, no como un sistema que completa un formulario.',
+      '',
+      'ESTRUCTURA — un solo párrafo con tres movimientos que fluyen sin títulos ni cortes:',
+      '1) APERTURA (una oración): sitúa lo que se trabajó en el período —contenidos, actividades, tipo de propuestas— según los datos que se te pasan. Es el marco común del grupo; todavía no habla del/la estudiante. Variá la forma de abrir: no arranques siempre con "En este período" ni con la misma construcción.',
+      '2) DESARROLLO (dos o tres oraciones): el corazón del juicio. Cómo trabajó este/a estudiante con eso: qué logró, qué le resultó más cómodo, qué le costó, y cómo se ve su proceso en los distintos tipos de evidencia (orales, escritas, otras actividades). Si hay historial, decí algo del recorrido: sostuvo, mejoró o retrocedió respecto del período anterior, y en qué. Concreto y con matices; si hay luces y sombras, las dos.',
+      '3) CIERRE (una oración): reflexivo y mirando hacia adelante. Qué vale la pena sostener, qué desafío puntual tiene por delante y por qué está a su alcance. Tiene que sonar a invitación a seguir, no a sentencia ni a fórmula de cortesía.',
+      '',
+      'LENGUAJE HUMANO, CERCANO Y FORMATIVO:',
+      '- Tercera persona singular, sin nombrar al/la estudiante. Omití el sujeto como se hace en español natural ("Trabajó con constancia…", "Le costó más…"). El nombre se te pasa solo para la concordancia: si permite inferir el género gramatical con claridad, concordá (comprometido / comprometida); si no, usá construcciones sin marca de género.',
+      '- Oraciones de ritmo variado: alguna corta, alguna más larga. Nada de listas de adjetivos ni enumeraciones mecánicas.',
+      '- Concreto antes que abstracto: nombrá el contenido o la actividad donde se vio el logro o la dificultad.',
+      '- Mirada de proceso: avances, puntos de partida, lo que empezó a hacer y lo que todavía está construyendo, no solo resultados.',
+      '- Cálido y honesto a la vez: una dificultad se puede decir con claridad sin lastimar; un logro se reconoce sin inflarlo.',
+      '',
+      'PROHIBIDO (delata texto automático o daña a quien lo lee):',
+      `- Muletillas de IA: ${MULETILLAS_IA.map((m) => `"${m}"`).join(', ')}. Tampoco "se sugiere que…" como cierre por defecto.`,
+      '- Repetir o parafrasear las aperturas ya usadas con otros estudiantes del grupo (se te pasan en el mensaje).',
+      '- Cadenas de adjetivos vacíos ("excelente, responsable y comprometido"), superlativos y elogios genéricos.',
+      '- Etiquetas o diagnósticos ("desatento", "vago", "problemas de conducta"), comparar con compañeros, opinar sobre la familia.',
+      '- Mencionar la nota numérica o la palabra "nota", emojis, signos de exclamación, comillas, títulos, viñetas, listas, segunda persona ("vos", "tú", "usted").',
+      '- INVENTAR. Solo contás con las notas por ítem, el detalle que se te pasa y el historial. No atribuyas conductas, actitudes ni anécdotas que no estén en los datos: no digas que conversa con compañeros, que se distrae o que participa con entusiasmo si no hay evidencia. Lo que sí podés hacer es leer el proceso desde las evidencias: qué tipo de tarea le salió mejor, dónde bajó, cómo se mueve entre períodos.',
+      '',
+      'CÓMO LEER LAS NOTAS (rúbrica del/la docente, obligatoria):',
+      `  • 1 (ausencia / no entrega): ${cfg.rubrica1} → nombrá de forma explícita las entregas pendientes dentro del desarrollo, para que quede registrado.`,
+      `  • 2 a 4: ${cfg.rubrica24}`,
+      `  • 5 a 6: ${cfg.rubrica56}`,
+      `  • 7 a 8: ${cfg.rubrica78}`,
+      `  • 9 a 10: ${cfg.rubrica910}`,
+      'No confundas 1 (no hubo producción) con 2-4 (hubo producción, por debajo de lo esperado). Con notas 2-4 el tono es constructivo: la dificultad se nombra, pero el foco está en qué puede fortalecer y cómo.',
+      'Si conviven niveles distintos entre ítems, mostrá el matiz ("le resultó más cómodo defender sus ideas oralmente que sostenerlas por escrito").',
+      'Las celdas sin calificar (S/N) solo se mencionan si el detalle indica que son varias.',
     ];
     if (cfg.compararConAnterior) {
-      lines.push('Cuando se incluya el "Historial de períodos anteriores", usalo para describir el PROCESO del/la estudiante: progreso, mantenimiento o retroceso respecto al período inmediato anterior. Evitá repetir literalmente juicios anteriores.');
+      lines.push('Cuando se incluya el historial de períodos anteriores, el desarrollo tiene que decir algo del recorrido (qué sostuvo, qué mejoró, dónde retrocedió). No repitas frases de los juicios anteriores: la familia ya los leyó.');
     }
-    lines.push(`Largo máximo: ${cfg.maxChars} caracteres. Devolvé SOLO el texto del juicio, sin comillas ni encabezados.`);
-    lines.push(`Tono solicitado: ${cfg.tone}`);
+    lines.push(
+      '',
+      `LARGO Y FORMA: entre ${min} y ${max} caracteres. El máximo de ${max} es estricto —el sistema recorta lo que sobre— así que no lo excedas. Un solo párrafo, de tres a cinco oraciones. Devolvé SOLO el texto del juicio, sin encabezados, comillas ni comentarios.`,
+      '',
+      'ANTES DE RESPONDER, releé y corregí:',
+      '- ¿Alguna oración serviría igual para cualquier estudiante del grupo? Reescribila con un dato concreto o sacala.',
+      '- ¿Arranca parecido a alguna apertura ya usada? Cambiá la construcción.',
+      '- ¿Suena a formulario o a texto generado? Volvé a escribirla como se lo dirías a la familia en una reunión.',
+      '- ¿Se cumple el orden apertura → desarrollo → cierre y el largo?',
+    );
+    if ((cfg.tone || '').trim()) lines.push('', `Tono adicional pedido por el/la docente: ${cfg.tone.trim()}`);
     return lines.join('\n');
   }
 
-  function buildUserMessage({ alumno, libreta, periodoDsc, notasDetalle, promedio, clasif, numeros, historial, incluirHistorial }) {
+  function buildUserMessage({ alumno, libreta, periodoDsc, notasDetalle, promedio, clasif, numeros, historial, incluirHistorial, cfg, aperturasUsadas }) {
+    cfg = cfg || CFG;
     const dist = distribucionNotas(numeros || []);
     const distTxt = [...dist.entries()]
       .sort((a, b) => a[0] - b[0])
       .map(([g, c]) => `nota ${g} × ${c}`)
       .join(', ');
+    const contenidos = parseLineas(cfg.iaContenidos);
+    const actividades = parseLineas(cfg.plantillaActividades);
     const parts = [
-      `Alumno: ${alumno || 'N/D'}`,
-      `Libreta/Asignatura: ${libreta || 'N/D'}`,
-      `Período evaluado: ${periodoDsc || 'N/D'}`,
-      `Promedio numérico calculado: ${promedio == null ? 'sin notas numéricas' : promedio.toFixed(2)}`,
-      `Distribución de notas (cuántas de cada valor): ${distTxt || 'sin notas numéricas'}`,
-      `Resumen según rúbrica: ${rubricaResumen(clasif, promedio)}`,
-      '',
-      'Detalle de notas del período:',
-      notasDetalle || '(sin notas registradas)',
+      'DATOS DEL PERÍODO (contexto compartido por todo el grupo):',
+      `Asignatura / libreta: ${libreta || 'N/D'}`,
+      `Período: ${periodoDsc || 'N/D'}`,
+      `Lo trabajado en el período: ${contenidos.length ? contenidos.join('; ') : '(no se especificó: abrí con una referencia honesta a las propuestas del período, sin inventar contenidos concretos)'}`,
     ];
+    if (actividades.length) parts.push(`Actividades realizadas: ${actividades.join('; ')}`);
+    const items = [];
+    if ((cfg.iaOrales || '').trim()) items.push(`Orales → ${cfg.iaOrales.trim()}`);
+    if ((cfg.iaEscritas || '').trim()) items.push(`Escritas → ${cfg.iaEscritas.trim()}`);
+    if ((cfg.iaOtras || '').trim()) items.push(`Otras actividades → ${cfg.iaOtras.trim()}`);
+    parts.push(`Qué evaluó cada ítem de la libreta: ${items.length ? items.join('; ') : 'Orales → intercambios y producciones orales; Escritas → producciones y evaluaciones escritas; Otras actividades → tareas, trabajo en clase y en plataforma'}`);
+    parts.push(
+      '',
+      'ESTUDIANTE:',
+      `Nombre (solo para la concordancia de género; NO lo escribas): ${alumno || 'N/D'}`,
+      'Notas del período por ítem:',
+      notasDetalle || '(sin notas registradas)',
+      `Lectura numérica: promedio ${promedio == null ? 'sin notas numéricas' : promedio.toFixed(2)}; distribución: ${distTxt || 'sin notas numéricas'}; según rúbrica: ${rubricaResumen(clasif, promedio)}`,
+    );
     if (incluirHistorial && historial && historial.length) {
-      parts.push('');
-      parts.push('Historial de períodos anteriores (más antiguo primero):');
+      parts.push('', 'HISTORIAL DE PERÍODOS ANTERIORES (más antiguo primero):');
       for (const h of historial) {
         const piezas = [];
         if (h.rend) piezas.push(`Rend.: ${h.rend}`);
-        if (h.juicio) piezas.push(`Juicio: ${h.juicio.replace(/\s+/g, ' ').slice(0, 240)}`);
+        if (h.juicio) piezas.push(`Juicio: ${h.juicio.replace(/\s+/g, ' ').slice(0, 300)}`);
         parts.push(`- ${h.dsc}: ${piezas.join(' | ') || '(sin datos cerrados)'}`);
       }
     }
-    parts.push('');
-    parts.push('Redactá el juicio de la asignatura para este período aplicando la rúbrica' + (incluirHistorial ? ' y, si hay datos previos, contrastá con el período anterior.' : '.'));
+    if (aperturasUsadas && aperturasUsadas.length) {
+      parts.push('', 'APERTURAS YA USADAS CON OTROS ESTUDIANTES DEL GRUPO (no las repitas ni las parafrasees):');
+      for (const a of aperturasUsadas.slice(-12)) parts.push(`- ${a}`);
+    }
+    parts.push('', 'Escribí ahora el juicio de este/a estudiante: apertura sobre lo trabajado → desarrollo sobre su trabajo → cierre reflexivo que invite a seguir.');
     return parts.join('\n');
   }
 
@@ -990,8 +1058,14 @@
               numeros,
               historial: opts.historial,
               incluirHistorial: !!CFG.compararConAnterior,
+              cfg: CFG,
+              aperturasUsadas: iaAperturasUsadas,
             }),
           });
+          text = String(text || '').trim().replace(/^["«“]+|["»”]+$/g, '').trim();
+          registrarApertura(text);
+          const muletillas = MULETILLAS_IA.filter((m) => text.toLowerCase().includes(m));
+          if (muletillas.length) panelLog(`   ⚠ La IA usó muletillas: ${muletillas.join(', ')}. Revisá el juicio.`);
           text = aplicarAdendumPlataforma(text, hayAusencias, CFG.bancoPlataformaAddendum);
         }
       }

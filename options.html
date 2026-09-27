@@ -386,8 +386,27 @@
       <h1>Estilo y rendimiento</h1>
       <p class="subtitle">Tono de redacción y cómo se completa la nota de Rend.</p>
       <div class="card">
+        <h2>Contexto del período (modo IA)</h2>
+        <p class="desc">La IA escribe cada juicio en tres movimientos: una <b>apertura</b> sobre lo trabajado en el período, un <b>desarrollo</b> sobre cómo trabajó ese/a estudiante y un <b>cierre</b> reflexivo que invita a seguir. Lo que cargues acá es lo que le da contenido real a la apertura y le permite leer las notas de cada ítem; sin esto, escribe en genérico.</p>
+        <label>Lo trabajado en el período <span class="lbl-hint">(contenidos, temas, propuestas — uno por línea)</span>
+          <textarea id="iaContenidos" rows="3" placeholder="Fuerzas: reconocimiento y cálculo en situaciones cotidianas&#10;Movimiento rectilíneo uniforme: gráficas y ecuaciones"></textarea>
+        </label>
+        <div class="row">
+          <label>Qué evaluó «Orales»
+            <input type="text" id="iaOrales" placeholder="participación en clase, puesta en común de problemas">
+          </label>
+          <label>Qué evaluó «Escritas»
+            <input type="text" id="iaEscritas" placeholder="escritos de fuerzas y MRU, informes de práctico">
+          </label>
+          <label>Qué evaluó «O. Act.»
+            <input type="text" id="iaOtras" placeholder="tareas en plataforma, trabajo en equipo">
+          </label>
+        </div>
+        <p class="hint">Las actividades del período (pestaña Plantillas) también se le pasan a la IA. El Asistente de prompts usa estos mismos campos si dejás vacíos los suyos.</p>
+      </div>
+      <div class="card">
         <h2>Estilo del juicio</h2>
-        <label>Tono / instrucciones generales <span class="lbl-hint">(solo aplica al modo IA)</span>
+        <label>Tono adicional <span class="lbl-hint">(solo modo IA; se suma al estilo humano y formativo que ya trae la extensión: sin frases hechas, sin muletillas de IA, tercera persona, sin inventar conductas)</span>
           <textarea id="tone" rows="3"></textarea>
         </label>
         <div class="row">

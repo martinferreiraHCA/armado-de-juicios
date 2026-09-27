@@ -31,7 +31,16 @@ Se abre una página de opciones a pantalla completa con pestañas:
   - **🗂️ Banco de juicios**: juicios ya escritos por vos, uno por nota.
     Gratis, sin API key.
   - **🤖 Solo IA**: cada juicio lo redacta el proveedor elegido
-    (necesita API key).
+    (necesita API key). El juicio se escribe en tres movimientos: una
+    **apertura** sobre lo trabajado en el período, un **desarrollo** sobre
+    cómo trabajó ese/a estudiante (por ítem de la libreta y, si está
+    activado, respecto del período anterior) y un **cierre** reflexivo que
+    invita a seguir. El prompt exige lenguaje humano, cercano y formativo:
+    sin muletillas de IA («cabe destacar», «en conclusión», «se sugiere
+    que…» como cierre), sin cadenas de adjetivos, sin inventar conductas
+    que no estén en las notas y sin repetir aperturas entre estudiantes
+    del mismo grupo (se le pasan las ya usadas en la sesión). El contexto
+    del período se carga en **Estilo y Rend. → Contexto del período**.
   - **🔀 Mixto**: banco si la nota está, IA como respaldo.
 - **📝 Generador de plantillas** — actividades del período + frases por
   banda de nota con sintaxis configurable. Placeholders: `{actividad}`
@@ -81,8 +90,10 @@ Se abre una página de opciones a pantalla completa con pestañas:
   respuesta se cargan la rúbrica y el banco de una sola vez.
 - **📊 Rúbrica** — qué significa cada rango de notas (instrucción
   obligatoria para el modo IA).
-- **🎨 Estilo y Rend.** — tono, largo máximo, contraste con períodos
-  anteriores y prorrateo del Rend.
+- **🎨 Estilo y Rend.** — contexto del período para el modo IA (lo
+  trabajado y qué evaluó cada ítem: Orales / Escritas / O. Act.), tono
+  adicional, largo máximo (450 caracteres por defecto), contraste con
+  períodos anteriores y prorrateo del Rend.
 - **🤖 Proveedor de IA** — proveedor, modelo y API key (solo para los
   modos IA y Mixto). La key se guarda con `chrome.storage.local` y se
   recuerda por proveedor.

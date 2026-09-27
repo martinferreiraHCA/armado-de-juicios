@@ -5,8 +5,12 @@ const DEFAULTS = {
   provider: 'anthropic',
   apiKey: '',
   model: 'claude-sonnet-4-5',
-  maxChars: 280,
-  tone: 'Profesional, claro, conciso, en español rioplatense. Siempre en TERCERA PERSONA refiriéndose al/la estudiante (nunca "vos", "tú" ni "usted"). Evitar adjetivos exagerados y opiniones sobre la familia.',
+  maxChars: 450,
+  iaContenidos: '',
+  iaOrales: '',
+  iaEscritas: '',
+  iaOtras: '',
+  tone: 'Cercano y formativo, como lo escribiría el/la docente para la familia: claro, honesto, sin frases hechas ni tono burocrático.',
   compararConAnterior: true,
   rendUsarRango: false,
   rendMin: 4,
@@ -42,7 +46,7 @@ const DEFAULTS = {
 
 const FIELDS = [
   'apiKey', 'model', 'maxChars', 'tone',
-  'compararConAnterior',
+  'compararConAnterior', 'iaContenidos', 'iaOrales', 'iaEscritas', 'iaOtras',
   'rendUsarRango', 'rendMin', 'rendMax',
   'modoGeneracion', 'bancoJuicios', 'bancoPlataformaAddendum',
   'bancoComponer', 'bancoConectoresContraste', 'bancoConectoresRefuerzo', 'bancoNCAddendum',
@@ -297,7 +301,7 @@ function contextoComun({ sinLargoPorJuicio = false } = {}) {
   const asig = getFieldValue('promptAsignatura');
   const nivel = getFieldValue('promptNivel');
   const acts = parseLineas(getFieldValue('promptActividades'));
-  const contenidos = parseLineas(getFieldValue('promptContenidos'));
+  const contenidos = parseLineas(getFieldValue('promptContenidos') || getFieldValue('iaContenidos'));
   const criterios = parseLineas(getFieldValue('promptCriterios'));
   const lines = [
     'Sos un docente uruguayo con experiencia redactando juicios de evaluación para boletines escolares (SIGED).',
@@ -362,9 +366,9 @@ function buildPrompt() {
   const variantes = Math.max(1, Math.min(10, getFieldValue('promptVariantes') || 3));
   const lines = contextoComun({ sinLargoPorJuicio: tipo === 'secuencia' });
   if (tipo === 'secuencia') {
-    const orales = getFieldValue('promptOrales');
-    const escritas = getFieldValue('promptEscritas');
-    const otras = getFieldValue('promptOtras');
+    const orales = getFieldValue('promptOrales') || getFieldValue('iaOrales');
+    const escritas = getFieldValue('promptEscritas') || getFieldValue('iaEscritas');
+    const otras = getFieldValue('promptOtras') || getFieldValue('iaOtras');
     lines.push(
       '',
       'La libreta tiene tres ítems con notas del 1 al 10: «Orales», «Escritas» y «Otras actuaciones (O. Act.)».',
