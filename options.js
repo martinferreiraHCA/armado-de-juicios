@@ -293,7 +293,7 @@ function previewPlantillas() {
 // Asistente de prompts (sin API): genera texto para pegar en una IA gratuita
 // y parsea la respuesta para cargarla en la config.
 // ---------------------------------------------------------------------------
-function contextoComun() {
+function contextoComun({ sinLargoPorJuicio = false } = {}) {
   const asig = getFieldValue('promptAsignatura');
   const nivel = getFieldValue('promptNivel');
   const acts = parseLineas(getFieldValue('promptActividades'));
@@ -311,7 +311,7 @@ function contextoComun() {
     '- Siempre en TERCERA PERSONA («demuestra», «logra», «presenta dificultades»). Nunca «vos», «tú» ni «usted».',
     '- NUNCA mencionar el nombre del/la estudiante.',
     '- Español rioplatense, profesional, sin emojis ni exclamaciones.',
-    `- Cada juicio de máximo ${getFieldValue('maxChars') || 280} caracteres (una o dos oraciones).`,
+    ...(sinLargoPorJuicio ? [] : [`- Cada juicio de máximo ${getFieldValue('maxChars') || 280} caracteres (una o dos oraciones).`]),
     '- Para notas insuficientes (2 a 4): tono constructivo y positivo, centrado en el margen de mejora.',
     '- La nota 1 significa ausencia o no entrega (no confundir con insuficiencia).',
   );
@@ -330,6 +330,20 @@ const ESTILO_MCN = [
   '- Sin etiquetas ni diagnósticos («déficit atencional», «preste atención»); sin lenguaje coloquial; tercera persona singular; ortografía y puntuación impecables.',
 ];
 
+// Mecánica de la secuencia por ítem (espejo de componerJuicioCategorias en
+// content.js). Se la pasamos a la IA que genera los bancos para que cada
+// frase esté escrita sabiendo exactamente cómo la va a encadenar la extensión.
+const MECANICA_SECUENCIA = [
+  'CÓMO ARMA EL JUICIO LA EXTENSIÓN (mecánica de concatenación — escribí cada frase sabiendo esto):',
+  '1. NOTA POR ÍTEM: para cada ítem (Orales, Escritas, Otras actuaciones) promedia las notas de ese ítem en el período y redondea a un entero de 1 a 10. Con esa nota toma UNA frase del banco de ESE ítem; si esa nota no tiene frases usa la nota más cercana que sí tenga (empate → la más baja). Entre alumnos rota las variantes y evita que dos frases seguidas arranquen con la misma palabra.',
+  '2. ORDEN FIJO: encadena las frases siempre en el orden Orales → Escritas → Otras actuaciones. Un ítem SIN notas en el período se omite (no se inventa nada), por eso cualquier frase puede terminar siendo la PRIMERA oración del juicio y también puede ir después de un conector.',
+  '3. CONECTORES: entre una frase y la siguiente inserta un conector seguido de coma, elegido comparando la banda del ítem con la del ítem anterior (bandas: 1 | 2-4 | 5-6 | 7-8 | 9-10): banda más baja → contraste («Sin embargo, …», «No obstante, …», «Aun así, …»); banda más alta → refuerzo («Asimismo, …», «Además, …», «A su vez, …»); misma banda → secuencia («Por su parte, …», «Del mismo modo, …»). A la frase encadenada se le baja la mayúscula inicial. Si la frase ya arranca con «Aunque…», «Si bien…» o «A pesar de…» se agrega como oración aparte, sin conector. Si trae un conector escrito al inicio, se lo quita.',
+  '4. CIERRE (en este orden): si hubo alguna nota 1 en el período agrega automáticamente «No debe descuidar las entregas en plataforma.» (salvo que el texto ya mencione entregas pendientes); si hubo tareas sin calificar agrega una aclaración configurada por el/la docente; y por último UNA frase del banco de RECOMENDACIONES, elegida por el PROMEDIO GENERAL del período redondeado, como oración final aparte (sin conector).',
+  '5. EJEMPLO con Orales 8, Escritas 5, Otras actuaciones 9 y promedio general 7: «<frase de Orales, nota 8>. Sin embargo, <frase de Escritas, nota 5, en minúscula>. Asimismo, <frase de Otras actuaciones, nota 9, en minúscula>. <recomendación, nota 7>.»',
+  '6. LARGO: el juicio final suma hasta tres frases más la recomendación y NO se recorta, así que cada frase de ítem debe ser UNA sola oración de entre 90 y 140 caracteres, y cada recomendación una sola oración de entre 60 y 110 caracteres.',
+  '7. COHERENCIA ENTRE ÍTEMS: como las frases de distintos ítems se mezclan en cualquier combinación de notas, cada una debe hablar SOLO de su ítem (lo oral en Orales, lo escrito en Escritas, tareas/actitudes/trabajo en clase en Otras actuaciones), sin resumir el desempeño general ni contradecir lo que pueda decir otro ítem. Las recomendaciones, en cambio, hablan del proceso general y no nombran un ítem puntual.',
+];
+
 function reglasFrasesEncadenables() {
   return [
     'IMPORTANTE — la extensión CONCATENA las frases automáticamente, por eso cada frase debe:',
@@ -346,7 +360,7 @@ function reglasFrasesEncadenables() {
 function buildPrompt() {
   const tipo = getFieldValue('promptTipo');
   const variantes = Math.max(1, Math.min(10, getFieldValue('promptVariantes') || 3));
-  const lines = contextoComun();
+  const lines = contextoComun({ sinLargoPorJuicio: tipo === 'secuencia' });
   if (tipo === 'secuencia') {
     const orales = getFieldValue('promptOrales');
     const escritas = getFieldValue('promptEscritas');
@@ -361,6 +375,8 @@ function buildPrompt() {
       'TAREA (dos pasos):',
       'PASO 1 — CRITERIOS: a partir de los contenidos dictados y de lo que se quiere evaluar, definí (para vos, sin escribirlo en la salida) qué demuestra un/a estudiante en cada ítem para cada nivel: nota 1 (ausencia / no entrega), 2 a 4 (en proceso), 5 a 6 (avance moderado), 7 a 8 (avance significativo), 9 a 10 (avance destacado).',
       `PASO 2 — BANCOS: escribí, para CADA uno de los tres ítems, un banco de frases para TODAS las notas del 1 al 10 con ${Math.max(3, variantes)} variantes por nota, donde cada frase hable del desempeño en ESE ítem (lo oral en Orales, lo escrito en Escritas, tareas/actitudes en O. Act.), graduada según el criterio del nivel. Escribí además un cuarto banco de RECOMENDACIONES para las notas 1 a 10 (${Math.max(3, variantes)} variantes por nota): una sugerencia u oportunidad de superación que CIERRA el juicio («Continúe trabajando…», «Se sugiere que…», «Es preciso que…», «Confíe en su potencial y…»), acorde al nivel del promedio.`,
+      '',
+      ...MECANICA_SECUENCIA,
       '',
       ...ESTILO_MCN,
       '',
