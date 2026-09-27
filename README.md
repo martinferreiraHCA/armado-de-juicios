@@ -124,6 +124,16 @@ Se abre una página de opciones a pantalla completa con pestañas:
    - El alumno actual ya fue procesado en esta corrida (anti loop infinito).
    - El usuario aprieta **Detener**.
 
+### Exportar notas y juicios a CSV
+
+Desde **Libreta @ → Cerrar Prom. por Libreta** (la grilla con todos los
+alumnos de una libreta), el botón **📤 Exportar notas y juicios (CSV)**
+recorre toda la lista y descarga un archivo `juicios_<libreta>_<fecha>.csv`
+con las columnas `nro_lista, alumno, nota, juicio`. El mismo contenido se
+copia al portapapeles, listo para pegarlo en ChatGPT/Claude y pedir un
+informe general del curso. El log muestra cantidad de alumnos, promedio de
+notas y cuántos quedaron sin nota o sin juicio.
+
 ## Privacidad
 
 - La API key se guarda con `chrome.storage.local` (solo tu perfil de

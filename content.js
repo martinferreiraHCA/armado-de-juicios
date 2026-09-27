@@ -2101,6 +2101,90 @@
     refreshScrapStatus();
   }
 
+  // ---------------------------------------------------------------------------
+  // Exportar CSV de notas y juicios (pantalla "Cerrar Prom. por Libreta")
+  // ---------------------------------------------------------------------------
+  // Recorre la grilla GeneXus (#GridContainerTbl) fila por fila y arma un CSV
+  // con: nro de lista, alumno, nota (Rend.) y juicio. Pensado para pegarlo en
+  // ChatGPT/Claude y pedir un informe general del curso.
+  function leerFilasGrillaLibreta() {
+    const filas = [];
+    const rows = document.querySelectorAll('#GridContainerTbl tbody tr[data-gxrow]');
+    for (const tr of rows) {
+      const nroEl = tr.querySelector('span[id^="span_vINSGACTNROLISTA_"]');
+      const nomEl = tr.querySelector('span[id^="span_vFALUNOMCOM_"]');
+      const notaEl = tr.querySelector('select[id^="vCALIFXREUCALIFCOD_"]');
+      const juicioEl = tr.querySelector('textarea[id^="vCALIFXREUJUICIO_"]');
+      if (!nomEl && !juicioEl) continue;
+      const nro = (nroEl?.textContent || '').trim();
+      const alumno = (nomEl?.textContent || '').trim();
+      const nota = notaEl
+        ? (notaEl.value || notaEl.options[notaEl.selectedIndex]?.text || '').trim()
+        : '';
+      const juicio = juicioEl
+        ? String(juicioEl.value ?? juicioEl.textContent ?? '').replace(/\r?\n/g, ' ').trim()
+        : '';
+      filas.push({ nro, alumno, nota, juicio });
+    }
+    return filas;
+  }
+
+  function csvCell(v) {
+    const s = String(v ?? '');
+    return /[",\r\n]/.test(s) ? `"${s.replace(/"/g, '""')}"` : s;
+  }
+
+  function nombreLibretaActual() {
+    const el = document.getElementById('span_vDESCLARGA') || document.getElementById('vDESCLARGA');
+    const txt = (el?.textContent || el?.value || '').trim();
+    // "9-EBI 2 - FÍSICA - Agosto Setiembre (Período habilitado ...)" → sin el paréntesis.
+    return txt.replace(/\s*\(.*$/, '').trim();
+  }
+
+  function descargarArchivo(nombre, contenido, mime = 'text/csv;charset=utf-8') {
+    const blob = new Blob([contenido], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = nombre;
+    a.style.display = 'none';
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1000);
+  }
+
+  async function exportarJuiciosCSV() {
+    const filas = leerFilasGrillaLibreta();
+    if (!filas.length) {
+      panelLog('⚠️ No encontré la grilla de alumnos. Abrí Libreta @ → Cerrar Prom. por Libreta y elegí la libreta.');
+      return;
+    }
+    const libreta = nombreLibretaActual();
+    const lineas = [['nro_lista', 'alumno', 'nota', 'juicio'].join(',')];
+    for (const f of filas) lineas.push([f.nro, f.alumno, f.nota, f.juicio].map(csvCell).join(','));
+    const csv = lineas.join('\r\n') + '\r\n';
+
+    const sinNota = filas.filter((f) => !f.nota).length;
+    const sinJuicio = filas.filter((f) => !f.juicio).length;
+    const notas = filas.map((f) => parseFloat(String(f.nota).replace(',', '.'))).filter((n) => !Number.isNaN(n));
+    const promedio = notas.length ? (notas.reduce((a, b) => a + b, 0) / notas.length).toFixed(2) : '-';
+
+    const slug = (libreta || 'libreta').normalize('NFD').replace(/[̀-ͯ]/g, '')
+      .replace(/[^A-Za-z0-9]+/g, '_').replace(/^_+|_+$/g, '').slice(0, 60);
+    const fecha = new Date().toISOString().slice(0, 10);
+    const nombreArchivo = `juicios_${slug}_${fecha}.csv`;
+
+    // BOM para que Excel/LibreOffice abran bien las tildes.
+    descargarArchivo(nombreArchivo, '﻿' + csv);
+    let copiado = false;
+    try { await navigator.clipboard.writeText(csv); copiado = true; } catch (_) {}
+
+    panelLog(`📤 CSV: ${filas.length} alumno(s) · promedio ${promedio} · sin nota ${sinNota} · sin juicio ${sinJuicio}.`);
+    panelLog(`   Descargado como ${nombreArchivo}${copiado ? ' y copiado al portapapeles' : ''}.`);
+    if (libreta) panelLog(`   Libreta: ${libreta}`);
+    console.log('[SIGED Juicios] CSV exportado:', { libreta, filas });
+  }
+
   // log y refreshScrapStatus se enlazan al panel construido más abajo.
   let panelLog = (m) => console.log('[SIGED Juicios]', m);
   let refreshScrapStatus = () => {};
@@ -2138,6 +2222,7 @@
         <button class="danger" data-act="stop" hidden>⏹ Detener</button>
         <button class="secondary" data-act="diag">🔍 Diagnóstico ahora</button>
         <button class="secondary" data-act="precarga-tooltips">💬 Pre-cargar tooltips de notas</button>
+        <button class="secondary" data-act="export-csv" title="Recorre toda la grilla de Cerrar Prom. por Libreta y descarga nro de lista, alumno, nota y juicio en CSV">📤 Exportar notas y juicios (CSV)</button>
         <label class="check-row">
           <input type="checkbox" data-fld="debug-toggle">
           🐞 Modo debug visual (pinta lo que toca)
@@ -2304,6 +2389,7 @@
         return;
       }
       if (act === 'debug-clear') { debugViz.clear(); log('🐞 Marcas borradas.'); return; }
+      if (act === 'export-csv') { await exportarJuiciosCSV(); return; }
       if (act === 'scrap-export') { await scrapingExport(); return; }
       if (act === 'scrap-clear') { scrapingClear(); return; }
       if (act === 'run' || act === 'run-all') {
