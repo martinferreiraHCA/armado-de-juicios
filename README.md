@@ -33,9 +33,14 @@ Se abre una página de opciones a pantalla completa con pestañas:
   - **🤖 Solo IA**: cada juicio lo redacta el proveedor elegido
     (necesita API key). El juicio se escribe en tres movimientos: una
     **apertura** sobre lo trabajado en el período, un **desarrollo** sobre
-    cómo trabajó ese/a estudiante (por ítem de la libreta y, si está
-    activado, respecto del período anterior) y un **cierre** reflexivo que
-    invita a seguir. El prompt exige lenguaje humano, cercano y formativo:
+    cómo trabajó ese/a estudiante (por ítem de la libreta) y un **cierre**
+    reflexivo que invita a seguir. Con «Contrastar con períodos anteriores»
+    activado, la extensión compara el promedio general y el de cada ítem con
+    el último período que tenga notas, determina si **mejoró, sostuvo o
+    retrocedió** (umbrales de 0,5 y 1,5 puntos) y la IA lo dice al
+    principio del juicio, nombrando el ítem donde más se nota el cambio.
+    Si el período anterior solo tiene Rend., la comparación se marca como
+    aproximada. El cálculo aparece también en el log del panel. El prompt exige lenguaje humano, cercano y formativo:
     sin muletillas de IA («cabe destacar», «en conclusión», «se sugiere
     que…» como cierre), sin cadenas de adjetivos, sin inventar conductas
     que no estén en las notas y sin repetir aperturas entre estudiantes
@@ -93,7 +98,12 @@ Se abre una página de opciones a pantalla completa con pestañas:
 - **🎨 Estilo y Rend.** — contexto del período para el modo IA (lo
   trabajado y qué evaluó cada ítem: Orales / Escritas / O. Act.), tono
   adicional, largo máximo (450 caracteres por defecto), contraste con
-  períodos anteriores y prorrateo del Rend.
+  períodos anteriores, prorrateo del Rend. y **Rend. con pocas notas**:
+  si el período tiene hasta N notas (por defecto 2), el Rend. parte del
+  promedio del período anterior (o de su Rend.) y baja un punto si más de
+  la mitad de las notas son menores a 5, sube un punto si más de la mitad
+  son de 7 o más sin ninguna baja, o se mantiene. Se aplica antes del
+  prorrateo, se registra en el log y la IA recibe la explicación.
 - **🤖 Proveedor de IA** — proveedor, modelo y API key (solo para los
   modos IA y Mixto). La key se guarda con `chrome.storage.local` y se
   recuerda por proveedor.
