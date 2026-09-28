@@ -435,6 +435,19 @@
           </label>
         </div>
       </div>
+      <div class="card">
+        <h2>Rend. con pocas notas</h2>
+        <p class="desc">Cuando un período tiene pocas evidencias, el promedio de dos o tres notas no dice mucho. Con esta regla el Rend. parte del <b>promedio del período anterior</b> (o de su Rend., si no tiene notas por ítem) y se ajusta según las notas de este período: si más de la mitad son bajas (menores a 5) <b>baja un punto</b>; si más de la mitad son de 7 o más y no hay ninguna baja <b>sube un punto</b>; en cualquier otro caso (notas mixtas, o sin notas) <b>se mantiene</b>. Se aplica antes del prorrateo y queda registrado en el log del panel; la IA recibe la explicación para no contradecir la nota.</p>
+        <label class="check">
+          <input type="checkbox" id="rendPocasNotas">
+          Usar el período anterior como base cuando hay pocas notas
+        </label>
+        <div class="row">
+          <label>Aplicar si el período tiene hasta esta cantidad de notas
+            <input type="number" id="rendPocasNotasUmbral" min="0" max="10" step="1">
+          </label>
+        </div>
+      </div>
     </section>
 
     <!-- ============ PROVEEDOR ============ -->

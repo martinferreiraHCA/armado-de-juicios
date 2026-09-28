@@ -98,7 +98,12 @@ Se abre una página de opciones a pantalla completa con pestañas:
 - **🎨 Estilo y Rend.** — contexto del período para el modo IA (lo
   trabajado y qué evaluó cada ítem: Orales / Escritas / O. Act.), tono
   adicional, largo máximo (450 caracteres por defecto), contraste con
-  períodos anteriores y prorrateo del Rend.
+  períodos anteriores, prorrateo del Rend. y **Rend. con pocas notas**:
+  si el período tiene hasta N notas (por defecto 2), el Rend. parte del
+  promedio del período anterior (o de su Rend.) y baja un punto si más de
+  la mitad de las notas son menores a 5, sube un punto si más de la mitad
+  son de 7 o más sin ninguna baja, o se mantiene. Se aplica antes del
+  prorrateo, se registra en el log y la IA recibe la explicación.
 - **🤖 Proveedor de IA** — proveedor, modelo y API key (solo para los
   modos IA y Mixto). La key se guarda con `chrome.storage.local` y se
   recuerda por proveedor.

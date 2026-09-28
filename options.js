@@ -13,6 +13,8 @@ const DEFAULTS = {
   tone: 'Cercano y formativo, como lo escribiría el/la docente para la familia: claro, honesto, sin frases hechas ni tono burocrático.',
   compararConAnterior: true,
   rendUsarRango: false,
+  rendPocasNotas: false,
+  rendPocasNotasUmbral: 2,
   rendMin: 4,
   rendMax: 7,
   modoGeneracion: 'ia',
@@ -47,7 +49,7 @@ const DEFAULTS = {
 const FIELDS = [
   'apiKey', 'model', 'maxChars', 'tone',
   'compararConAnterior', 'iaContenidos', 'iaOrales', 'iaEscritas', 'iaOtras',
-  'rendUsarRango', 'rendMin', 'rendMax',
+  'rendUsarRango', 'rendMin', 'rendMax', 'rendPocasNotas', 'rendPocasNotasUmbral',
   'modoGeneracion', 'bancoJuicios', 'bancoPlataformaAddendum',
   'bancoComponer', 'bancoConectoresContraste', 'bancoConectoresRefuerzo', 'bancoNCAddendum',
   'bancoEstructura', 'bancoOrales', 'bancoEscritas', 'bancoOtras', 'bancoRecomendaciones',
@@ -827,6 +829,7 @@ async function save() {
   for (const k of FIELDS) cfg[k] = getFieldValue(k);
   cfg.provider = providerId;
   cfg.maxChars = Math.max(80, Math.min(2000, cfg.maxChars || DEFAULTS.maxChars));
+  cfg.rendPocasNotasUmbral = Math.max(0, Math.min(10, Math.round(cfg.rendPocasNotasUmbral ?? DEFAULTS.rendPocasNotasUmbral)));
   if (!cfg.tone) cfg.tone = DEFAULTS.tone;
   cfg.rendMin = Math.max(1, Math.min(10, cfg.rendMin || DEFAULTS.rendMin));
   cfg.rendMax = Math.max(1, Math.min(10, cfg.rendMax || DEFAULTS.rendMax));

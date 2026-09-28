@@ -21,6 +21,12 @@
     rendUsarRango: false,
     rendMin: 4,
     rendMax: 7,
+    // Rend. con pocas notas: si el período tiene hasta rendPocasNotasUmbral
+    // notas numéricas, el Rend. parte del promedio del período anterior y
+    // baja un punto si predominan las notas bajas (< 5), sube un punto si
+    // predominan las buenas (>= 7) sin ninguna baja, o se mantiene.
+    rendPocasNotas: false,
+    rendPocasNotasUmbral: 2,
     modoGeneracion: 'ia', // 'ia' | 'banco' | 'plantilla' | 'mixto'
     bancoJuicios: '',
     bancoPlataformaAddendum: 'No debe descuidar las entregas en plataforma.',
@@ -830,7 +836,7 @@
     return lines.join('\n');
   }
 
-  function buildUserMessage({ alumno, libreta, periodoDsc, notasDetalle, promedio, clasif, numeros, historial, incluirHistorial, cfg, aperturasUsadas, evolucion }) {
+  function buildUserMessage({ alumno, libreta, periodoDsc, notasDetalle, promedio, clasif, numeros, historial, incluirHistorial, cfg, aperturasUsadas, evolucion, reglaRend }) {
     cfg = cfg || CFG;
     const dist = distribucionNotas(numeros || []);
     const distTxt = [...dist.entries()]
@@ -859,6 +865,9 @@
       notasDetalle || '(sin notas registradas)',
       `Lectura numérica: promedio ${promedio == null ? 'sin notas numéricas' : promedio.toFixed(2)}; distribución: ${distTxt || 'sin notas numéricas'}; según rúbrica: ${rubricaResumen(clasif, promedio)}`,
     );
+    if (reglaRend) {
+      parts.push(`Este período tiene pocas evidencias, así que el/la docente definió la calificación a partir del período anterior (${reglaRend}). El juicio debe hablar de las pocas evidencias que hay y del recorrido, sin sobreinterpretar.`);
+    }
     if (incluirHistorial && evolucion) {
       parts.push(
         '',
@@ -978,11 +987,16 @@
       debugViz.mark(row.juicio, debugViz.colors.juicioInput, `Juicio textarea (${row.dsc})`);
     }
 
+    // Rend. con pocas notas: parte del promedio del período anterior.
+    const reglaPocas = ajustarPromedioPocasNotas(numeros, opts.historial, CFG);
+    const promedioRend = reglaPocas ? reglaPocas.promedio : promedio;
+    if (reglaPocas) panelLog(`   ⚖ ${row.dsc}: ${reglaPocas.texto}`);
+
     // Prorrateo del promedio (escala 1-10) al rango configurado, si aplica.
-    let promedioFinal = promedio;
+    let promedioFinal = promedioRend;
     let prorrateoLog = '';
-    if (promedio != null && CFG.rendUsarRango && CFG.rendMin >= 1 && CFG.rendMax <= 10 && CFG.rendMin < CFG.rendMax) {
-      const clamped = Math.max(1, Math.min(10, promedio));
+    if (promedioRend != null && CFG.rendUsarRango && CFG.rendMin >= 1 && CFG.rendMax <= 10 && CFG.rendMin < CFG.rendMax) {
+      const clamped = Math.max(1, Math.min(10, promedioRend));
       promedioFinal = CFG.rendMin + (clamped - 1) / 9 * (CFG.rendMax - CFG.rendMin);
       prorrateoLog = ` → prorrateado a ${promedioFinal.toFixed(2)} (rango ${CFG.rendMin}-${CFG.rendMax})`;
     }
@@ -996,7 +1010,7 @@
         fireGxChange(row.califSelect);
         rendCompletado = opt.textContent.trim();
         rendNota = parseFloat((opt.value || opt.textContent).replace(',', '.'));
-        debugViz.mark(row.califSelect, debugViz.colors.filled, `✓ Rend=${rendCompletado} (avg ${promedio.toFixed(2)}${prorrateoLog})`);
+        debugViz.mark(row.califSelect, debugViz.colors.filled, `✓ Rend=${rendCompletado} (${reglaPocas ? 'pocas notas, base anterior' : 'avg'} ${promedioRend.toFixed(2)}${prorrateoLog})`);
       }
     }
 
@@ -1087,6 +1101,7 @@
               cfg: CFG,
               aperturasUsadas: iaAperturasUsadas,
               evolucion,
+              reglaRend: reglaPocas ? reglaPocas.texto : '',
             }),
           });
           text = String(text || '').trim().replace(/^["«“]+|["»”]+$/g, '').trim();
@@ -1205,6 +1220,47 @@
     if (items.length) partes.push(items.map((it) => `${it.nombre} ${it.antes.toFixed(1)} → ${it.despues.toFixed(1)} (${fmtDelta(it.delta)}, ${it.veredicto})`).join('; '));
     if (aproximada) partes.push('comparación aproximada: el período anterior solo tiene la nota de Rend., no notas por ítem');
     return { periodoAnterior: prev.dsc, veredicto, delta, anterior: prev.promedios, actual: ahora, items, destacado, destacados, aproximada, texto: partes.join('. ') + '.' };
+  }
+
+  // Regla de Rend. para períodos con pocas notas. Devuelve null si no
+  // aplica (regla apagada, más notas que el umbral, o sin período anterior
+  // con promedio o Rend. numérico). Si aplica, devuelve el promedio ajustado
+  // y una explicación para el log y para la IA.
+  function ajustarPromedioPocasNotas(numeros, historial, cfg) {
+    if (!cfg.rendPocasNotas) return null;
+    const umbral = Math.max(0, Math.round(cfg.rendPocasNotasUmbral ?? 2));
+    if (numeros.length > umbral) return null;
+    let base = null;
+    let origen = '';
+    for (let i = (historial || []).length - 1; i >= 0 && base == null; i--) {
+      const h = historial[i];
+      if (h.promedios && h.promedios.general != null) { base = h.promedios.general; origen = `promedio ${base.toFixed(2)} de ${h.dsc}`; break; }
+      const r = parseFloat(String(h.rend || '').replace(',', '.'));
+      if (!Number.isNaN(r)) { base = r; origen = `Rend. ${r} de ${h.dsc}`; break; }
+    }
+    if (base == null) return null;
+    const bajas = numeros.filter((n) => n < 5).length;
+    const buenas = numeros.filter((n) => n >= 7).length;
+    let ajuste = 0;
+    let motivo = '';
+    if (!numeros.length) {
+      motivo = 'sin notas en el período: se mantiene';
+    } else if (bajas * 2 > numeros.length) {
+      ajuste = -1;
+      motivo = `${bajas} de ${numeros.length} nota(s) por debajo de 5: baja un punto`;
+    } else if (buenas * 2 > numeros.length && bajas === 0) {
+      ajuste = 1;
+      motivo = `${buenas} de ${numeros.length} nota(s) de 7 o más y ninguna baja: sube un punto`;
+    } else {
+      motivo = 'notas mixtas: se mantiene';
+    }
+    const promedio = Math.max(1, Math.min(10, base + ajuste));
+    return {
+      promedio,
+      base,
+      ajuste,
+      texto: `pocas notas (${numeros.length} ≤ ${umbral}): Rend. a partir del ${origen}; ${motivo} → ${promedio.toFixed(2)}`,
+    };
   }
 
   // Procesa la grilla completa del alumno actual. Devuelve resumen.
