@@ -784,7 +784,7 @@
       'Sos el/la docente de la asignatura y estás escribiendo el juicio del boletín de un/a estudiante concreto/a. Lo van a leer el/la estudiante y su familia. Escribí como una persona que conoce al grupo y quiere ayudar a que ese/a estudiante siga aprendiendo, no como un sistema que completa un formulario.',
       '',
       'ESTRUCTURA — un solo párrafo con tres movimientos que fluyen sin títulos ni cortes:',
-      '1) APERTURA (una oración): sitúa lo que se trabajó en el período —contenidos, actividades, tipo de propuestas— según los datos que se te pasan. Es el marco común del grupo; todavía no habla del/la estudiante. Variá la forma de abrir: no arranques siempre con "En este período" ni con la misma construcción.',
+      '1) APERTURA (una o dos oraciones): sitúa lo que se trabajó en el período —contenidos, actividades, tipo de propuestas— según los datos que se te pasan, y, cuando se te pase la EVOLUCIÓN respecto del período anterior, la apertura la dice ahí mismo, al principio del juicio: si mejoró, sostuvo o retrocedió, y en qué ítem se nota más. Usá el veredicto calculado por la extensión (no lo contradigas; si es "aproximada", decilo con más cautela) y expresalo con palabras de proceso, sin números: "retomó con más seguridad lo que en junio le costaba", "sostuvo el nivel que ya traía", "en lo escrito se nota un paso atrás respecto del período anterior". Variá la forma de abrir: no arranques siempre con "En este período" ni con "Respecto del período anterior", ni con la misma construcción.',
       '2) DESARROLLO (dos o tres oraciones): el corazón del juicio. Cómo trabajó este/a estudiante con eso: qué logró, qué le resultó más cómodo, qué le costó, y cómo se ve su proceso en los distintos tipos de evidencia (orales, escritas, otras actividades). Si hay historial, decí algo del recorrido: sostuvo, mejoró o retrocedió respecto del período anterior, y en qué. Concreto y con matices; si hay luces y sombras, las dos.',
       '3) CIERRE (una oración): reflexivo y mirando hacia adelante. Qué vale la pena sostener, qué desafío puntual tiene por delante y por qué está a su alcance. Tiene que sonar a invitación a seguir, no a sentencia ni a fórmula de cortesía.',
       '',
@@ -814,7 +814,7 @@
       'Las celdas sin calificar (S/N) solo se mencionan si el detalle indica que son varias.',
     ];
     if (cfg.compararConAnterior) {
-      lines.push('Cuando se incluya el historial de períodos anteriores, el desarrollo tiene que decir algo del recorrido (qué sostuvo, qué mejoró, dónde retrocedió). No repitas frases de los juicios anteriores: la familia ya los leyó.');
+      lines.push('Cuando se incluya la evolución y el historial de períodos anteriores, el juicio es de PROCESO: la apertura anuncia el movimiento (mejoró / sostuvo / retrocedió) y el desarrollo lo explica con los ítems (dónde avanzó, dónde bajó, qué cambió respecto de lo que decía el juicio anterior). Una mejora se celebra con medida y se conecta con lo que la hizo posible; un retroceso se nombra sin dramatizar y se lee como algo recuperable. No repitas frases de los juicios anteriores: la familia ya los leyó.');
     }
     lines.push(
       '',
@@ -830,7 +830,7 @@
     return lines.join('\n');
   }
 
-  function buildUserMessage({ alumno, libreta, periodoDsc, notasDetalle, promedio, clasif, numeros, historial, incluirHistorial, cfg, aperturasUsadas }) {
+  function buildUserMessage({ alumno, libreta, periodoDsc, notasDetalle, promedio, clasif, numeros, historial, incluirHistorial, cfg, aperturasUsadas, evolucion }) {
     cfg = cfg || CFG;
     const dist = distribucionNotas(numeros || []);
     const distTxt = [...dist.entries()]
@@ -859,11 +859,35 @@
       notasDetalle || '(sin notas registradas)',
       `Lectura numérica: promedio ${promedio == null ? 'sin notas numéricas' : promedio.toFixed(2)}; distribución: ${distTxt || 'sin notas numéricas'}; según rúbrica: ${rubricaResumen(clasif, promedio)}`,
     );
+    if (incluirHistorial && evolucion) {
+      parts.push(
+        '',
+        'EVOLUCIÓN RESPECTO DEL PERÍODO ANTERIOR (calculada por la extensión a partir de las notas; la apertura del juicio la tiene que decir):',
+        `Veredicto general: ${evolucion.veredicto}${evolucion.aproximada ? ' (comparación aproximada, el período anterior solo tiene Rend.)' : ''}.`,
+        `Promedio: ${evolucion.anterior.general.toFixed(1)} en ${evolucion.periodoAnterior} → ${evolucion.actual.general.toFixed(1)} ahora (${fmtDelta(evolucion.delta)}).`,
+      );
+      for (const it of evolucion.items) {
+        parts.push(`- ${it.nombre}: ${it.antes.toFixed(1)} → ${it.despues.toFixed(1)} (${fmtDelta(it.delta)}, ${it.veredicto})`);
+      }
+      if (evolucion.destacado && Math.abs(evolucion.destacado.delta) >= 0.5) {
+        const nombres = (evolucion.destacados || [evolucion.destacado]).map((it) => it.nombre);
+        parts.push(nombres.length > 1
+          ? `El movimiento se nota por igual en ${nombres.join(' y ')}; nombralos en la apertura o al inicio del desarrollo.`
+          : `El ítem donde más se nota el movimiento es ${nombres[0]}; nombralo en la apertura o al inicio del desarrollo.`);
+      } else if (evolucion.items.length) {
+        parts.push('Ningún ítem se movió de forma marcada: el juicio habla de continuidad, no de cambio.');
+      }
+    }
     if (incluirHistorial && historial && historial.length) {
       parts.push('', 'HISTORIAL DE PERÍODOS ANTERIORES (más antiguo primero):');
       for (const h of historial) {
         const piezas = [];
         if (h.rend) piezas.push(`Rend.: ${h.rend}`);
+        if (h.promedios && h.promedios.general != null) {
+          const it = [['Orales', h.promedios.orales], ['Escritas', h.promedios.escritas], ['O. Act.', h.promedios.otras]]
+            .filter(([, v]) => v != null).map(([k, v]) => `${k} ${v.toFixed(1)}`).join(', ');
+          piezas.push(`Promedio ${h.promedios.general.toFixed(1)}${it ? ` (${it})` : ''}`);
+        }
         if (h.juicio) piezas.push(`Juicio: ${h.juicio.replace(/\s+/g, ' ').slice(0, 300)}`);
         parts.push(`- ${h.dsc}: ${piezas.join(' | ') || '(sin datos cerrados)'}`);
       }
@@ -943,6 +967,8 @@
     const notasDetalle = buildNotasDetalle(periodData);
     const numeros = todasLasNotasNumericas(periodData);
     const promedio = calcularPromedio(numeros);
+    const evolucion = CFG.compararConAnterior ? calcularEvolucion(periodData, opts.historial) : null;
+    if (evolucion) panelLog(`   ↕ ${row.dsc}: ${evolucion.texto}`);
 
     // Marcar inputs editables (debug visual)
     if (row.califSelect && periodData.AsigPideRendimiento) {
@@ -1060,6 +1086,7 @@
               incluirHistorial: !!CFG.compararConAnterior,
               cfg: CFG,
               aperturasUsadas: iaAperturasUsadas,
+              evolucion,
             }),
           });
           text = String(text || '').trim().replace(/^["«“]+|["»”]+$/g, '').trim();
@@ -1088,20 +1115,96 @@
     return { ok: true, msg: `${row.dsc}: ${partes.join(' ') || 'sin cambios'}` };
   }
 
+  // Promedios de un período: general y por ítem de la libreta. null donde
+  // no hay notas numéricas.
+  function promediosPeriodo(periodData) {
+    if (!periodData) return { general: null, orales: null, escritas: null, otras: null, n: 0 };
+    const o = notasToNumeros(parseNotas(periodData.Orales));
+    const e = notasToNumeros(parseNotas(periodData.Escritos));
+    const a = notasToNumeros(parseNotas(periodData.OActividades));
+    const todas = [...o, ...e, ...a];
+    return {
+      general: calcularPromedio(todas),
+      orales: calcularPromedio(o),
+      escritas: calcularPromedio(e),
+      otras: calcularPromedio(a),
+      n: todas.length,
+    };
+  }
+
   // Construye el historial: para cada fila previa a la actual, sus datos
-  // cerrados (Rend. y/o juicio guardados). Incluye solo períodos con datos.
+  // cerrados (Rend. y/o juicio guardados) y sus promedios por ítem, para
+  // poder comparar el proceso. Incluye solo períodos con algún dato.
   function historialAntesDe(rows, periodMap, currentIdx) {
     const out = [];
     for (let i = 0; i < currentIdx; i++) {
       const r = rows[i];
       const data = periodMap.get((r.code || '').trim());
       if (!data) continue;
-      const rend = (data.CalifxReuCalifCod || '').trim();
+      const rend = (data.CalifxReuCalifCod || data.RendVisible || '').trim();
       const juicio = (data.CalifxReuJuicio || '').trim();
-      if (!rend && !juicio) continue;
-      out.push({ dsc: r.dsc || r.code, rend, juicio });
+      const prom = promediosPeriodo(data);
+      if (!rend && !juicio && prom.n === 0) continue;
+      out.push({ dsc: r.dsc || r.code, rend, juicio, promedios: prom });
     }
     return out;
+  }
+
+  // Evolución respecto del último período anterior con notas: compara el
+  // promedio general y el de cada ítem y clasifica el movimiento. Umbrales
+  // (en puntos de la escala 1-10): |Δ| < 0,5 sostuvo; ≥ 0,5 mejoró /
+  // retrocedió; ≥ 1,5 mejoró / retrocedió claramente. Si el período anterior
+  // no tiene notas por ítem pero sí Rend., se compara contra ese Rend. y se
+  // marca como aproximada. Devuelve null si no hay con qué comparar.
+  function clasificarDelta(delta) {
+    if (delta == null) return null;
+    if (Math.abs(delta) < 0.5) return 'sostuvo';
+    if (delta >= 1.5) return 'mejoró claramente';
+    if (delta >= 0.5) return 'mejoró';
+    if (delta <= -1.5) return 'retrocedió claramente';
+    return 'retrocedió';
+  }
+
+  function fmtDelta(d) {
+    return (d > 0 ? '+' : d < 0 ? '−' : '±') + Math.abs(d).toFixed(1);
+  }
+
+  function calcularEvolucion(periodData, historial) {
+    if (!historial || !historial.length) return null;
+    const ahora = promediosPeriodo(periodData);
+    if (ahora.general == null) return null;
+    let prev = null;
+    for (let i = historial.length - 1; i >= 0; i--) {
+      const h = historial[i];
+      if (h.promedios && h.promedios.general != null) { prev = h; break; }
+    }
+    let aproximada = false;
+    if (!prev) {
+      for (let i = historial.length - 1; i >= 0; i--) {
+        const n = parseFloat(String(historial[i].rend || '').replace(',', '.'));
+        if (!Number.isNaN(n)) { prev = { ...historial[i], promedios: { general: n, orales: null, escritas: null, otras: null, n: 0 } }; aproximada = true; break; }
+      }
+    }
+    if (!prev) return null;
+    const delta = ahora.general - prev.promedios.general;
+    const items = [
+      ['Orales', prev.promedios.orales, ahora.orales],
+      ['Escritas', prev.promedios.escritas, ahora.escritas],
+      ['Otras actividades', prev.promedios.otras, ahora.otras],
+    ]
+      .filter(([, antes, despues]) => antes != null && despues != null)
+      .map(([nombre, antes, despues]) => ({ nombre, antes, despues, delta: despues - antes, veredicto: clasificarDelta(despues - antes) }));
+    // El ítem que más se movió (en cualquier dirección) es el que vale la
+    // pena nombrar en el juicio.
+    const ordenados = items.slice().sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta));
+    const destacado = ordenados[0] || null;
+    // Ítems que se movieron (casi) tanto como el destacado: se nombran juntos.
+    const destacados = destacado ? ordenados.filter((it) => Math.abs(Math.abs(it.delta) - Math.abs(destacado.delta)) < 0.1) : [];
+    const veredicto = clasificarDelta(delta);
+    const partes = [`${veredicto} respecto de ${prev.dsc} (promedio ${prev.promedios.general.toFixed(1)} → ${ahora.general.toFixed(1)}, ${fmtDelta(delta)})`];
+    if (items.length) partes.push(items.map((it) => `${it.nombre} ${it.antes.toFixed(1)} → ${it.despues.toFixed(1)} (${fmtDelta(it.delta)}, ${it.veredicto})`).join('; '));
+    if (aproximada) partes.push('comparación aproximada: el período anterior solo tiene la nota de Rend., no notas por ítem');
+    return { periodoAnterior: prev.dsc, veredicto, delta, anterior: prev.promedios, actual: ahora, items, destacado, destacados, aproximada, texto: partes.join('. ') + '.' };
   }
 
   // Procesa la grilla completa del alumno actual. Devuelve resumen.

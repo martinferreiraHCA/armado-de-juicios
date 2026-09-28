@@ -33,9 +33,14 @@ Se abre una página de opciones a pantalla completa con pestañas:
   - **🤖 Solo IA**: cada juicio lo redacta el proveedor elegido
     (necesita API key). El juicio se escribe en tres movimientos: una
     **apertura** sobre lo trabajado en el período, un **desarrollo** sobre
-    cómo trabajó ese/a estudiante (por ítem de la libreta y, si está
-    activado, respecto del período anterior) y un **cierre** reflexivo que
-    invita a seguir. El prompt exige lenguaje humano, cercano y formativo:
+    cómo trabajó ese/a estudiante (por ítem de la libreta) y un **cierre**
+    reflexivo que invita a seguir. Con «Contrastar con períodos anteriores»
+    activado, la extensión compara el promedio general y el de cada ítem con
+    el último período que tenga notas, determina si **mejoró, sostuvo o
+    retrocedió** (umbrales de 0,5 y 1,5 puntos) y la IA lo dice al
+    principio del juicio, nombrando el ítem donde más se nota el cambio.
+    Si el período anterior solo tiene Rend., la comparación se marca como
+    aproximada. El cálculo aparece también en el log del panel. El prompt exige lenguaje humano, cercano y formativo:
     sin muletillas de IA («cabe destacar», «en conclusión», «se sugiere
     que…» como cierre), sin cadenas de adjetivos, sin inventar conductas
     que no estén en las notas y sin repetir aperturas entre estudiantes
