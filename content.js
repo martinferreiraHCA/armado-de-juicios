@@ -11,6 +11,12 @@
     model: 'claude-sonnet-4-5',
     maxChars: 280,
     tone: 'Profesional, claro, conciso, en español rioplatense. Siempre en TERCERA PERSONA refiriéndose al/la estudiante (nunca "vos", "tú" ni "usted"). Evitar adjetivos exagerados y opiniones sobre la familia.',
+    // Contexto libre del período (solo modo IA): lo que se trabajó, criterios
+    // de logro, aspectos a destacar. Se inyecta como guía en el prompt.
+    contextoIA: '',
+    // Juicio final integrador: en el último período de la grilla, el modo IA
+    // recibe los juicios y Rend anteriores y redacta un cierre del proceso.
+    cierreIntegrador: true,
     compararConAnterior: true,
     rendUsarRango: false,
     rendMin: 4,
@@ -771,12 +777,16 @@
     if (cfg.compararConAnterior) {
       lines.push('Cuando se incluya el "Historial de períodos anteriores", usalo para describir el PROCESO del/la estudiante: progreso, mantenimiento o retroceso respecto al período inmediato anterior. Evitá repetir literalmente juicios anteriores.');
     }
+    if ((cfg.contextoIA || '').trim()) {
+      lines.push('CONTEXTO DEL PERÍODO (escrito por el/la docente; usalo como guía principal para personalizar el juicio con lo efectivamente trabajado y sus criterios de logro):');
+      lines.push(cfg.contextoIA.trim());
+    }
     lines.push(`Largo máximo: ${cfg.maxChars} caracteres. Devolvé SOLO el texto del juicio, sin comillas ni encabezados.`);
     lines.push(`Tono solicitado: ${cfg.tone}`);
     return lines.join('\n');
   }
 
-  function buildUserMessage({ alumno, libreta, periodoDsc, notasDetalle, promedio, clasif, numeros, historial, incluirHistorial }) {
+  function buildUserMessage({ alumno, libreta, periodoDsc, notasDetalle, promedio, clasif, numeros, historial, incluirHistorial, esCierre }) {
     const dist = distribucionNotas(numeros || []);
     const distTxt = [...dist.entries()]
       .sort((a, b) => a[0] - b[0])
@@ -804,7 +814,11 @@
       }
     }
     parts.push('');
-    parts.push('Redactá el juicio de la asignatura para este período aplicando la rúbrica' + (incluirHistorial ? ' y, si hay datos previos, contrastá con el período anterior.' : '.'));
+    if (esCierre && historial && historial.length) {
+      parts.push('Este es el período de CIERRE del curso. Redactá un juicio FINAL e INTEGRADOR del proceso: tomá las notas de este período como referencia principal y retomá lo señalado en los juicios anteriores (progresos sostenidos, aspectos superados y aspectos aún pendientes). Cerrá con una valoración global del proceso y una recomendación.');
+    } else {
+      parts.push('Redactá el juicio de la asignatura para este período aplicando la rúbrica' + (incluirHistorial ? ' y, si hay datos previos, contrastá con el período anterior.' : '.'));
+    }
     return parts.join('\n');
   }
 
@@ -974,6 +988,7 @@
           text = `(sin plantilla para nota ${notaParaBanco != null ? notaParaBanco : '?'})`;
         } else {
           // Camino IA: 'ia' siempre, 'mixto' como respaldo.
+          const esCierre = !!(CFG.cierreIntegrador && opts.esUltimoPeriodo && opts.historial && opts.historial.length);
           text = await callClaude({
             provider: CFG.provider || 'anthropic',
             apiKey: CFG.apiKey,
@@ -989,7 +1004,8 @@
               clasif,
               numeros,
               historial: opts.historial,
-              incluirHistorial: !!CFG.compararConAnterior,
+              incluirHistorial: !!CFG.compararConAnterior || esCierre,
+              esCierre,
             }),
           });
           text = aplicarAdendumPlataforma(text, hayAusencias, CFG.bancoPlataformaAddendum);
@@ -1090,9 +1106,13 @@
     for (let i = 0; i < rows.length; i++) {
       const row = rows[i];
       if (abortSignal && abortSignal.aborted) return { ok: false, alumno, aborted: true };
-      const historial = CFG.compararConAnterior ? historialAntesDe(rows, periodMap, i) : [];
+      const esUltimoPeriodo = i === rows.length - 1;
+      // El historial se necesita para contrastar con el período anterior y
+      // también para el juicio final integrador del último período.
+      const necesitaHistorial = CFG.compararConAnterior || (CFG.cierreIntegrador && esUltimoPeriodo);
+      const historial = necesitaHistorial ? historialAntesDe(rows, periodMap, i) : [];
       try {
-        const r = await procesarFila(row, periodMap, { alumno, libreta, historial });
+        const r = await procesarFila(row, periodMap, { alumno, libreta, historial, esUltimoPeriodo });
         log((r.ok ? '✓ ' : '· ') + r.msg);
       } catch (err) {
         log(`✗ ${row.dsc || row.code}: ${err.message}`);

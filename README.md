@@ -81,8 +81,13 @@ Se abre una página de opciones a pantalla completa con pestañas:
   respuesta se cargan la rúbrica y el banco de una sola vez.
 - **📊 Rúbrica** — qué significa cada rango de notas (instrucción
   obligatoria para el modo IA).
-- **🎨 Estilo y Rend.** — tono, largo máximo, contraste con períodos
-  anteriores y prorrateo del Rend.
+- **🎨 Estilo y Rend.** — tono, contexto del período / prompt guía (texto
+  libre del/la docente que se inyecta en cada juicio del modo IA para
+  personalizarlo), largo máximo (solo recorta al modo IA), contraste con
+  períodos anteriores, juicio final integrador (en el último período la IA
+  revisa los juicios y Rend anteriores del alumno y redacta el cierre del
+  proceso con las notas de este período como referencia) y prorrateo del
+  Rend.
 - **🤖 Proveedor de IA** — proveedor, modelo y API key (solo para los
   modos IA y Mixto). La key se guarda con `chrome.storage.local` y se
   recuerda por proveedor.

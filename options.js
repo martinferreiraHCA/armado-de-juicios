@@ -8,6 +8,8 @@ const DEFAULTS = {
   maxChars: 280,
   tone: 'Profesional, claro, conciso, en español rioplatense. Siempre en TERCERA PERSONA refiriéndose al/la estudiante (nunca "vos", "tú" ni "usted"). Evitar adjetivos exagerados y opiniones sobre la familia.',
   compararConAnterior: true,
+  contextoIA: '',
+  cierreIntegrador: true,
   rendUsarRango: false,
   rendMin: 4,
   rendMax: 7,
@@ -41,8 +43,8 @@ const DEFAULTS = {
 };
 
 const FIELDS = [
-  'apiKey', 'model', 'maxChars', 'tone',
-  'compararConAnterior',
+  'apiKey', 'model', 'maxChars', 'tone', 'contextoIA',
+  'compararConAnterior', 'cierreIntegrador',
   'rendUsarRango', 'rendMin', 'rendMax',
   'modoGeneracion', 'bancoJuicios', 'bancoPlataformaAddendum',
   'bancoComponer', 'bancoConectoresContraste', 'bancoConectoresRefuerzo', 'bancoNCAddendum',

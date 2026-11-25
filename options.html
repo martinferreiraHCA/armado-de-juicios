@@ -390,6 +390,9 @@
         <label>Tono / instrucciones generales <span class="lbl-hint">(solo aplica al modo IA)</span>
           <textarea id="tone" rows="3"></textarea>
         </label>
+        <label>Contexto del período / prompt guía <span class="lbl-hint">(solo modo IA — pegá acá lo que trabajaste, los criterios de logro y lo que quieras que la IA tenga en cuenta; se inyecta en cada juicio para personalizarlo)</span>
+          <textarea id="contextoIA" rows="5" placeholder="Trabajamos el sistema solar y los estados de la materia.&#10;Evalué que identifiquen los planetas y expliquen los cambios de estado con ejemplos cotidianos.&#10;Destacar la participación en el proyecto de la maqueta cuando el desempeño lo amerite."></textarea>
+        </label>
         <div class="row">
           <label>Largo máximo del juicio (caracteres) <span class="lbl-hint">(solo recorta al modo IA; los juicios del banco y de plantillas se escriben completos, sin límite)</span>
             <input type="number" id="maxChars" min="80" max="2000">
@@ -398,6 +401,10 @@
         <label class="check">
           <input type="checkbox" id="compararConAnterior">
           Contrastar con períodos anteriores (evaluación de proceso, solo modo IA)
+        </label>
+        <label class="check">
+          <input type="checkbox" id="cierreIntegrador">
+          En el último período, redactar un juicio FINAL integrador: la IA revisa los juicios y Rend anteriores del alumno y cierra el proceso con esa referencia (solo modo IA)
         </label>
       </div>
       <div class="card">
