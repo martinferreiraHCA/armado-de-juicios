@@ -146,21 +146,134 @@ function populateProviders(currentId) {
   sel.value = currentId in SIGED_PROVIDERS ? currentId : 'anthropic';
 }
 
-function populateModels(providerId, currentModel) {
+// ---------------------------------------------------------------------------
+// Modelos: lista de respaldo (providers.js) + lista real traída de la API del
+// proveedor (cacheada en storage). Se refresca sola al pegar la key o cambiar
+// de proveedor, y a mano con el botón «↻ Cargar modelos».
+// ---------------------------------------------------------------------------
+const PROVIDER_MODELS_CACHE = 'siged_provider_models'; // { providerId: { models, fetchedAt } }
+
+function mensajeBackground(msg) {
+  return new Promise((resolve) => {
+    try {
+      chrome.runtime.sendMessage(msg, (res) => {
+        if (chrome.runtime.lastError) resolve({ ok: false, error: chrome.runtime.lastError.message });
+        else resolve(res || { ok: false, error: 'Sin respuesta del service worker.' });
+      });
+    } catch (err) {
+      resolve({ ok: false, error: String((err && err.message) || err) });
+    }
+  });
+}
+
+function poblarSelectModelos(models, currentModel) {
   const sel = $('model');
   sel.innerHTML = '';
-  const p = SIGED_PROVIDERS[providerId];
-  if (!p) return;
-  for (const m of p.models) {
+  for (const m of models) {
     const opt = document.createElement('option');
     opt.value = m.value;
     opt.textContent = m.label;
     sel.appendChild(opt);
   }
-  if (currentModel && Array.from(sel.options).some((o) => o.value === currentModel)) {
-    sel.value = currentModel;
-  } else {
-    sel.selectedIndex = 0;
+  if (currentModel && !Array.from(sel.options).some((o) => o.value === currentModel)) {
+    // Un modelo elegido antes que no está en la lista nueva no se pierde.
+    const opt = document.createElement('option');
+    opt.value = currentModel;
+    opt.textContent = currentModel + ' (guardado)';
+    sel.insertBefore(opt, sel.firstChild);
+  }
+  if (currentModel) sel.value = currentModel;
+  if (sel.selectedIndex < 0) sel.selectedIndex = 0;
+}
+
+async function populateModels(providerId, currentModel) {
+  const p = SIGED_PROVIDERS[providerId];
+  if (!p) return;
+  const cache = (await chrome.storage.local.get(PROVIDER_MODELS_CACHE))[PROVIDER_MODELS_CACHE] || {};
+  const remotos = cache[providerId] && cache[providerId].models;
+  poblarSelectModelos((remotos && remotos.length) ? remotos : p.models, currentModel);
+}
+
+// Pide la lista real de modelos a la API del proveedor y repuebla el select.
+// En modo silencioso (refresco automático) los errores no molestan.
+async function cargarModelosRemotos(providerId, apiKey, { silencioso = false } = {}) {
+  const st = $('modelStatus');
+  const p = SIGED_PROVIDERS[providerId];
+  if (!p || !p.modelsUrl) return;
+  if (!apiKey && providerId !== 'openrouter') {
+    if (!silencioso) showStatus(st, `⚠ Pegá primero la API key de ${p.label}.`, 'err');
+    return;
+  }
+  const btn = $('recargarModelos');
+  if (btn) btn.disabled = true;
+  if (!silencioso) showStatus(st, `⏳ Consultando modelos de ${p.label}…`, '');
+  try {
+    const res = await mensajeBackground({ type: 'listModels', payload: { provider: providerId, apiKey } });
+    if (!res.ok) throw new Error(res.error || 'Error desconocido');
+    const cache = (await chrome.storage.local.get(PROVIDER_MODELS_CACHE))[PROVIDER_MODELS_CACHE] || {};
+    cache[providerId] = { models: res.models, fetchedAt: Date.now() };
+    await chrome.storage.local.set({ [PROVIDER_MODELS_CACHE]: cache });
+    // Solo repoblamos si el proveedor visible sigue siendo el consultado.
+    if ($('provider').value === providerId) {
+      poblarSelectModelos(res.models, $('model').value);
+    }
+    if (!silencioso) showStatus(st, `✓ ${res.models.length} modelos cargados desde ${p.label}.`, 'ok');
+  } catch (err) {
+    if (!silencioso) showStatus(st, `✗ No pude cargar los modelos: ${err.message}`, 'err');
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Probar la IA: llamada real con la config visible y un alumno de ejemplo.
+// ---------------------------------------------------------------------------
+async function probarIA() {
+  const st = $('testIAStatus');
+  const out = $('testIAResultado');
+  const providerId = $('provider').value || 'anthropic';
+  const p = SIGED_PROVIDERS[providerId] || {};
+  const apiKey = getFieldValue('apiKey');
+  const model = $('model').value;
+  if (!apiKey) { showStatus(st, `⚠ Pegá primero la API key de ${p.label || providerId}.`, 'err'); return; }
+  if (!model) { showStatus(st, '⚠ Elegí un modelo.', 'err'); return; }
+  const btn = $('testIA');
+  btn.disabled = true;
+  out.hidden = true;
+  showStatus(st, `⏳ Llamando a ${p.label || providerId} (${model})…`, '');
+
+  const guia = (getFieldValue('contextoIA') || '').trim();
+  const system = [
+    'Sos un asistente que ayuda a docentes uruguayos a redactar juicios de evaluación para boletines escolares (SIGED).',
+    'Redactá SIEMPRE en tercera persona, sin mencionar el nombre del/la estudiante, sin emojis.',
+    `Tono solicitado: ${getFieldValue('tone') || 'profesional, claro, en español rioplatense'}`,
+    guia ? `GUÍA DE NARRACIÓN del/la docente (seguila al redactar):\n${guia}` : '',
+    `Largo máximo: ${getFieldValue('maxChars') || 280} caracteres. Devolvé SOLO el texto del juicio, sin comillas ni encabezados.`,
+  ].filter(Boolean).join('\n');
+  const userMsg = [
+    'Alumno de PRUEBA (verificación de configuración):',
+    'Período evaluado: Noviembre',
+    'Notas del período — Orales: 7, 8 · Escritas: 6 · Otras actividades: 9',
+    'Tareas sin nota (S/N): 1',
+    'Promedio: 7.50',
+    '',
+    'Redactá el juicio del período para este alumno.',
+  ].join('\n');
+
+  try {
+    const res = await mensajeBackground({
+      type: 'callAi',
+      payload: { provider: providerId, apiKey, model, maxTokens: 1024, system, userMsg },
+    });
+    if (!res.ok) throw new Error(res.error || 'Error desconocido');
+    out.textContent = (res.text || '').trim();
+    out.hidden = false;
+    showStatus(st, `✓ ${p.label || providerId} respondió bien. Juicio de ejemplo generado:`, 'ok');
+  } catch (err) {
+    out.hidden = true;
+    showStatus(st, `✗ Falló la llamada: ${err.message}`, 'err');
+  } finally {
+    btn.disabled = false;
   }
 }
 
@@ -699,7 +812,7 @@ async function renderBases() {
     item.querySelector('[data-load]').addEventListener('click', async () => {
       const cfg = bases[nombre].cfg || {};
       populateProviders(cfg.provider || DEFAULTS.provider);
-      populateModels($('provider').value, cfg.model);
+      await populateModels($('provider').value, cfg.model);
       refreshProviderHelp($('provider').value);
       for (const k of FIELDS) {
         if (k === 'apiKey') continue;
@@ -790,7 +903,7 @@ async function load() {
   const perProvider = stored[PER_PROVIDER_KEYS] || {};
   const providerId = $('provider').value;
   const remembered = perProvider[providerId] || {};
-  populateModels(providerId, remembered.model || cfg.model);
+  await populateModels(providerId, remembered.model || cfg.model);
   refreshProviderHelp(providerId);
 
   for (const k of FIELDS) {
@@ -801,6 +914,8 @@ async function load() {
   refreshModoHint();
   refreshBancoCoverage();
   await renderBases();
+  // Refresco automático de modelos desde la API (en segundo plano).
+  cargarModelosRemotos(providerId, remembered.apiKey || cfg.apiKey || '', { silencioso: true });
 }
 
 async function save() {
@@ -866,10 +981,21 @@ document.addEventListener('DOMContentLoaded', async () => {
     const providerId = $('provider').value;
     const stored = (await chrome.storage.local.get(PER_PROVIDER_KEYS))[PER_PROVIDER_KEYS] || {};
     const remembered = stored[providerId] || {};
-    populateModels(providerId, remembered.model);
+    await populateModels(providerId, remembered.model);
     refreshProviderHelp(providerId);
     setFieldValue('apiKey', remembered.apiKey || '');
+    // Al cambiar de proveedor refrescamos su lista real de modelos.
+    cargarModelosRemotos(providerId, remembered.apiKey || '', { silencioso: true });
   });
+
+  // Al pegar/cambiar la key, traemos los modelos de ese proveedor.
+  $('apiKey').addEventListener('change', () => {
+    cargarModelosRemotos($('provider').value, getFieldValue('apiKey'), { silencioso: true });
+  });
+  $('recargarModelos').addEventListener('click', () => {
+    cargarModelosRemotos($('provider').value, getFieldValue('apiKey'), { silencioso: false });
+  });
+  $('testIA').addEventListener('click', probarIA);
 
   for (const radio of document.querySelectorAll('input[name="modoGeneracion"]')) {
     radio.addEventListener('change', refreshModoHint);

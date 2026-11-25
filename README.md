@@ -91,7 +91,11 @@ Se abre una página de opciones a pantalla completa con pestañas:
   Rend.
 - **🤖 Proveedor de IA** — proveedor, modelo y API key (solo para los
   modos IA y Mixto). La key se guarda con `chrome.storage.local` y se
-  recuerda por proveedor.
+  recuerda por proveedor. Los modelos se cargan automáticamente desde la
+  API del proveedor al pegar la key o cambiar de proveedor (con caché
+  local y la lista fija como respaldo), y el botón **🧪 Probar la IA**
+  hace una llamada real con un alumno de ejemplo para verificar key,
+  modelo, tono y guía de narración antes de tocar SIGED.
 - **💾 Mis bases** — guardá la configuración actual con un nombre (por
   asignatura, grupo o período), cargala cuando quieras, y exportá/importá
   todo a un archivo JSON para respaldar o compartir con colegas (las API

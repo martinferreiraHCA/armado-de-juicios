@@ -12,6 +12,13 @@ chrome.runtime.onMessage.addListener((msg, _sender, sendResponse) => {
       .catch((err) => sendResponse({ ok: false, error: String((err && err.message) || err) }));
     return true;
   }
+  // Lista de modelos disponibles del proveedor (para la página de opciones).
+  if (msg.type === 'listModels') {
+    listModels(msg.payload || {})
+      .then((models) => sendResponse({ ok: true, models }))
+      .catch((err) => sendResponse({ ok: false, error: String((err && err.message) || err) }));
+    return true;
+  }
   // Compatibilidad con versiones previas: callClaude → forzamos proveedor anthropic.
   if (msg.type === 'callClaude') {
     const payload = Object.assign({}, msg.payload, { provider: 'anthropic' });
@@ -47,4 +54,25 @@ async function callAi({ provider, apiKey, model, system, userMsg, maxTokens }) {
   const text = p.extract(data);
   if (!text) throw new Error(`[${p.label || id}] respuesta vacía. Cuerpo: ${raw.slice(0, 200)}`);
   return text;
+}
+
+async function listModels({ provider, apiKey }) {
+  const id = provider || 'anthropic';
+  const p = SIGED_PROVIDERS[id];
+  if (!p) throw new Error(`Proveedor desconocido: ${id}`);
+  if (!p.modelsUrl) throw new Error(`${p.label || id} no soporta listar modelos automáticamente.`);
+  // OpenRouter lista sus modelos sin key; el resto la necesita.
+  if (!apiKey && id !== 'openrouter') throw new Error(`Falta la API key de ${p.label || id}.`);
+
+  const res = await fetch(p.modelsUrl(apiKey), {
+    method: 'GET',
+    headers: p.modelsHeaders ? p.modelsHeaders(apiKey) : {},
+  });
+  const raw = await res.text();
+  if (!res.ok) throw new Error(`[${p.label || id}] HTTP ${res.status}: ${raw.slice(0, 300)}`);
+  let data;
+  try { data = JSON.parse(raw); } catch { throw new Error(`[${p.label || id}] respuesta no JSON: ${raw.slice(0, 200)}`); }
+  const models = p.modelsExtract(data) || [];
+  if (!models.length) throw new Error(`[${p.label || id}] la API devolvió una lista de modelos vacía.`);
+  return models;
 }

@@ -440,7 +440,19 @@
         <label style="margin-top:12px">Modelo
           <select id="model"></select>
         </label>
+        <div class="toolbar">
+          <button class="btn secondary small" id="recargarModelos">↻ Cargar modelos del proveedor</button>
+        </div>
+        <div class="status" id="modelStatus"></div>
+        <p class="hint">Los modelos se actualizan solos desde la API del proveedor al pegar la key o cambiar de proveedor (la lista de arriba es el respaldo si la API no responde). El botón fuerza la recarga.</p>
         <p class="hint">La key se guarda solo en tu navegador (<code>chrome.storage.local</code>) y se recuerda por proveedor.</p>
+      </div>
+      <div class="card">
+        <h2>Probar la IA</h2>
+        <p class="desc">Hace una llamada real con el proveedor, la key y el modelo de arriba, usando un alumno de ejemplo (Orales 7 y 8 · Escritas 6 · O. Act. 9, una tarea S/N). Sirve para verificar que la key funciona y ver cómo redacta con tu tono y tu guía de narración, sin tocar SIGED.</p>
+        <button class="btn" id="testIA">🧪 Probar ahora</button>
+        <div class="status" id="testIAStatus"></div>
+        <div class="preview" id="testIAResultado" hidden></div>
       </div>
     </section>
 

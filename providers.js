@@ -1,10 +1,13 @@
 // Definiciones de proveedores de IA. Compartido por content.js, popup.js y
 // background.js. Cada proveedor expone:
 //   - label / apiKeyHint / apiKeyUrl    → datos para la UI
-//   - models[]                          → lista de modelos disponibles
+//   - models[]                          → lista de modelos de respaldo
 //   - url(model, key) / headers(key)    → cómo armar el request
 //   - body(model, system, userMsg, max) → cuerpo del request
 //   - extract(data)                     → cómo sacar el texto de la respuesta
+//   - modelsUrl(key) / modelsHeaders(key) / modelsExtract(data)
+//       → cómo pedir la lista de modelos disponibles a la API (opcional);
+//         modelsExtract devuelve [{ value, label }]
 
 const SIGED_PROVIDERS = {
   anthropic: {
@@ -17,6 +20,14 @@ const SIGED_PROVIDERS = {
       { value: 'claude-opus-4-7', label: 'Claude Opus 4.7 (mejor calidad, más caro)' },
       { value: 'claude-haiku-4-5-20251001', label: 'Claude Haiku 4.5 (rápido)' },
     ],
+    modelsUrl: () => 'https://api.anthropic.com/v1/models?limit=100',
+    modelsHeaders: (key) => ({
+      'x-api-key': key,
+      'anthropic-version': '2023-06-01',
+      'anthropic-dangerous-direct-browser-access': 'true',
+    }),
+    modelsExtract: (data) => ((data && data.data) || [])
+      .map((m) => ({ value: m.id, label: m.display_name || m.id })),
     url: () => 'https://api.anthropic.com/v1/messages',
     headers: (key) => ({
       'content-type': 'application/json',
@@ -44,6 +55,14 @@ const SIGED_PROVIDERS = {
       { value: 'gpt-4.1', label: 'GPT-4.1' },
       { value: 'gpt-4.1-mini', label: 'GPT-4.1 mini' },
     ],
+    modelsUrl: () => 'https://api.openai.com/v1/models',
+    modelsHeaders: (key) => ({ 'Authorization': `Bearer ${key}` }),
+    modelsExtract: (data) => ((data && data.data) || [])
+      .map((m) => m.id)
+      .filter((id) => /^(gpt-|o\d|chatgpt-)/.test(id)
+        && !/(embedding|audio|realtime|whisper|tts|dall-e|moderation|transcribe|image|search)/i.test(id))
+      .sort()
+      .map((id) => ({ value: id, label: id })),
     url: () => 'https://api.openai.com/v1/chat/completions',
     headers: (key) => ({
       'content-type': 'application/json',
@@ -70,6 +89,12 @@ const SIGED_PROVIDERS = {
       { value: 'gemini-1.5-flash', label: 'Gemini 1.5 Flash (gratis)' },
       { value: 'gemini-1.5-pro', label: 'Gemini 1.5 Pro (límites más bajos)' },
     ],
+    modelsUrl: (key) => `https://generativelanguage.googleapis.com/v1beta/models?pageSize=200&key=${encodeURIComponent(key)}`,
+    modelsHeaders: () => ({}),
+    modelsExtract: (data) => ((data && data.models) || [])
+      .filter((m) => (m.supportedGenerationMethods || []).includes('generateContent'))
+      .map((m) => ({ value: (m.name || '').replace(/^models\//, ''), label: m.displayName || m.name }))
+      .filter((m) => m.value && !/(embedding|aqa|imagen|veo|tts|image|learnlm)/i.test(m.value)),
     url: (model, key) => `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent?key=${encodeURIComponent(key)}`,
     headers: () => ({ 'content-type': 'application/json' }),
     body: (_model, system, userMsg, maxTokens) => ({
@@ -95,6 +120,13 @@ const SIGED_PROVIDERS = {
       { value: 'mixtral-8x7b-32768', label: 'Mixtral 8x7B (gratis)' },
       { value: 'gemma2-9b-it', label: 'Gemma 2 9B (gratis)' },
     ],
+    modelsUrl: () => 'https://api.groq.com/openai/v1/models',
+    modelsHeaders: (key) => ({ 'Authorization': `Bearer ${key}` }),
+    modelsExtract: (data) => ((data && data.data) || [])
+      .map((m) => m.id)
+      .filter((id) => id && !/(whisper|tts|guard|embedding|moderation)/i.test(id))
+      .sort()
+      .map((id) => ({ value: id, label: id })),
     url: () => 'https://api.groq.com/openai/v1/chat/completions',
     headers: (key) => ({
       'content-type': 'application/json',
@@ -124,6 +156,19 @@ const SIGED_PROVIDERS = {
       { value: 'anthropic/claude-sonnet-4-5', label: 'Claude Sonnet 4.5 (paga)' },
       { value: 'openai/gpt-4o-mini', label: 'GPT-4o mini (paga)' },
     ],
+    modelsUrl: () => 'https://openrouter.ai/api/v1/models',
+    modelsHeaders: (key) => (key ? { 'Authorization': `Bearer ${key}` } : {}),
+    modelsExtract: (data) => {
+      const list = ((data && data.data) || []).map((m) => {
+        const gratis = m.pricing
+          && parseFloat(m.pricing.prompt || '1') === 0
+          && parseFloat(m.pricing.completion || '1') === 0;
+        return { value: m.id, label: (m.name || m.id) + (gratis ? ' · gratis' : ''), gratis };
+      });
+      // Gratis primero, después alfabético.
+      list.sort((a, b) => ((b.gratis ? 1 : 0) - (a.gratis ? 1 : 0)) || a.label.localeCompare(b.label));
+      return list.map(({ value, label }) => ({ value, label }));
+    },
     url: () => 'https://openrouter.ai/api/v1/chat/completions',
     headers: (key) => ({
       'content-type': 'application/json',
@@ -152,6 +197,17 @@ const SIGED_PROVIDERS = {
       { value: 'mistral-small-latest', label: 'Mistral Small' },
       { value: 'mistral-large-latest', label: 'Mistral Large' },
     ],
+    modelsUrl: () => 'https://api.mistral.ai/v1/models',
+    modelsHeaders: (key) => ({ 'Authorization': `Bearer ${key}` }),
+    modelsExtract: (data) => {
+      const vistos = new Set();
+      return ((data && data.data) || [])
+        .map((m) => m.id)
+        .filter((id) => id && !/(embed|moderation|ocr|transcribe)/i.test(id))
+        .filter((id) => !vistos.has(id) && vistos.add(id))
+        .sort()
+        .map((id) => ({ value: id, label: id }));
+    },
     url: () => 'https://api.mistral.ai/v1/chat/completions',
     headers: (key) => ({
       'content-type': 'application/json',
@@ -177,6 +233,13 @@ const SIGED_PROVIDERS = {
       { value: 'command-r7b-12-2024', label: 'Command R7B (rápido, gratis trial)' },
       { value: 'command-r-plus', label: 'Command R+' },
     ],
+    modelsUrl: () => 'https://api.cohere.com/v1/models?page_size=100&endpoint=chat',
+    modelsHeaders: (key) => ({ 'Authorization': `Bearer ${key}` }),
+    modelsExtract: (data) => ((data && data.models) || [])
+      .map((m) => m.name)
+      .filter(Boolean)
+      .sort()
+      .map((n) => ({ value: n, label: n })),
     url: () => 'https://api.cohere.com/v2/chat',
     headers: (key) => ({
       'content-type': 'application/json',
