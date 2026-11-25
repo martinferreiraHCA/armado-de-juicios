@@ -95,7 +95,18 @@ Se abre una página de opciones a pantalla completa con pestañas:
   API del proveedor al pegar la key o cambiar de proveedor (con caché
   local y la lista fija como respaldo), y el botón **🧪 Probar la IA**
   hace una llamada real con un alumno de ejemplo para verificar key,
-  modelo, tono y guía de narración antes de tocar SIGED.
+  modelo, tono y guía de narración antes de tocar SIGED. El botón **⭐
+  Sugerir modelo** le pregunta a la propia IA cuál de los modelos listados
+  redacta estos textos con el estilo más humano y natural (y una
+  alternativa económica), con opción de seleccionarlo al toque.
+- **⭐ Referencias** — en el modo IA, debajo de cada juicio generado en
+  SIGED aparecen botones **👍 ➖ 👎** para calificarlo y **💬 Corregir**
+  para pedirle por texto que lo reescriba («más breve», «mencioná la
+  mejora en lo oral»…). Todo queda guardado como base de referencia: los
+  👍 se inyectan en el prompt como ejemplos de estilo a imitar, los 👎
+  como ejemplos a evitar y las correcciones como indicaciones permanentes,
+  así la redacción mejora con el uso. La pestaña lista lo guardado y
+  permite borrarlo o apagar su uso.
 - **💾 Mis bases** — guardá la configuración actual con un nombre (por
   asignatura, grupo o período), cargala cuando quieras, y exportá/importá
   todo a un archivo JSON para respaldar o compartir con colegas (las API

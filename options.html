@@ -100,6 +100,7 @@
       <button data-tab="rubrica">📊 Rúbrica</button>
       <button data-tab="estilo">🎨 Estilo y Rend.</button>
       <button data-tab="proveedor">🤖 Proveedor de IA</button>
+      <button data-tab="referencias">⭐ Referencias</button>
       <button data-tab="bases">💾 Mis bases</button>
     </nav>
     <div class="save-zone">
@@ -453,6 +454,33 @@
         <button class="btn" id="testIA">🧪 Probar ahora</button>
         <div class="status" id="testIAStatus"></div>
         <div class="preview" id="testIAResultado" hidden></div>
+      </div>
+      <div class="card">
+        <h2>¿Qué modelo me conviene?</h2>
+        <p class="desc">Le pregunta a la IA (con tu key actual) cuál de los modelos disponibles del proveedor redacta este tipo de textos con el estilo más humano y natural en español rioplatense, y una alternativa económica razonable.</p>
+        <button class="btn secondary" id="sugerirModelo">⭐ Sugerir modelo</button>
+        <div class="status" id="sugerirModeloStatus"></div>
+        <div class="preview" id="sugerirModeloResultado" hidden></div>
+      </div>
+    </section>
+
+    <!-- ============ REFERENCIAS ============ -->
+    <section class="tab" data-tab="referencias">
+      <h1>Juicios de referencia</h1>
+      <p class="subtitle">Cuando el modo IA genera un juicio en SIGED, debajo del campo aparecen botones <b>👍 ➖ 👎</b> para calificarlo y <b>💬 Corregir</b> para pedirle por texto que lo reescriba. Todo queda guardado acá: los 👍 se usan como ejemplos de estilo a imitar, los 👎 como ejemplos a evitar, y las correcciones como indicaciones permanentes para los próximos juicios.</p>
+      <div class="card">
+        <label class="check">
+          <input type="checkbox" id="usarReferencias">
+          Usar las referencias para guiar a la IA (últimos 4 👍, 2 👎 y 3 correcciones distintas)
+        </label>
+      </div>
+      <div class="card">
+        <h2>Guardados</h2>
+        <div id="listaReferencias"><p class="hint">Todavía no guardaste ninguno. Generá juicios en SIGED con el modo IA y usá los botones que aparecen debajo de cada juicio.</p></div>
+        <div class="toolbar">
+          <button class="btn danger small" id="borrarReferencias">🗑 Borrar todas las referencias</button>
+        </div>
+        <div class="status" id="refStatus"></div>
       </div>
     </section>
 

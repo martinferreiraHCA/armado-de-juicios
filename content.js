@@ -17,6 +17,9 @@
     // Juicio final integrador: en el último período de la grilla, el modo IA
     // recibe los juicios y Rend anteriores y redacta un cierre del proceso.
     cierreIntegrador: true,
+    // Referencias: los juicios calificados con 👍/👎 y las correcciones
+    // pedidas guían a la IA (imitar lo aprobado, evitar lo rechazado).
+    usarReferencias: true,
     compararConAnterior: true,
     rendUsarRango: false,
     rendMin: 4,
@@ -70,10 +73,16 @@
   // ---------------------------------------------------------------------------
   let CFG = { ...DEFAULTS };
 
+  // Feedback del/la docente sobre juicios IA: calificaciones 👍/➖/👎,
+  // correcciones pedidas por texto y juicios guardados como referencia.
+  const FEEDBACK_KEY = 'siged_feedback';
+  let FEEDBACK = [];
+
   async function loadConfig() {
     // Leemos TODO lo que haya en storage para poder migrar campos viejos.
     const stored = await chrome.storage.local.get(null);
     CFG = { ...DEFAULTS, ...stored };
+    FEEDBACK = Array.isArray(stored[FEEDBACK_KEY]) ? stored[FEEDBACK_KEY] : [];
     // Migración: usarBanco/bancoFallbackIA → modoGeneracion.
     if (!['ia', 'banco', 'plantilla', 'mixto'].includes(CFG.modoGeneracion)) {
       if (stored.usarBanco) CFG.modoGeneracion = stored.bancoFallbackIA === false ? 'banco' : 'mixto';
@@ -85,6 +94,7 @@
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
     for (const k of Object.keys(changes)) {
+      if (k === FEEDBACK_KEY) { FEEDBACK = changes[k].newValue || []; continue; }
       if (k in CFG) CFG[k] = changes[k].newValue;
     }
   });
@@ -781,6 +791,21 @@
       lines.push('GUÍA DE NARRACIÓN (escrita por el/la docente): define la perspectiva desde la que narrar el juicio, qué tener en cuenta, qué priorizar o evitar al contar el proceso del/la estudiante. Seguila al redactar, sin copiarla literalmente:');
       lines.push(cfg.contextoIA.trim());
     }
+    if (cfg.usarReferencias) {
+      const refs = seleccionarReferencias();
+      if (refs.buenos.length) {
+        lines.push('JUICIOS APROBADOS por el/la docente (imitá su estilo, estructura, vocabulario y nivel de detalle; NO los copies literalmente):');
+        refs.buenos.forEach((j, i) => lines.push(`  ${i + 1}. ${j}`));
+      }
+      if (refs.malos.length) {
+        lines.push('JUICIOS RECHAZADOS por el/la docente (evitá este estilo):');
+        refs.malos.forEach((j, i) => lines.push(`  ${i + 1}. ${j}`));
+      }
+      if (refs.sugerencias.length) {
+        lines.push('CORRECCIONES que el/la docente pidió en juicios anteriores (aplicalas siempre):');
+        refs.sugerencias.forEach((s) => lines.push(`  - ${s}`));
+      }
+    }
     lines.push(`Largo máximo: ${cfg.maxChars} caracteres. Devolvé SOLO el texto del juicio, sin comillas ni encabezados.`);
     lines.push(`Tono solicitado: ${cfg.tone}`);
     return lines.join('\n');
@@ -834,6 +859,123 @@
         resolve(res.text);
       });
     });
+  }
+
+  // ---------------------------------------------------------------------------
+  // Feedback de juicios IA: botones 👍/➖/👎 + corrección por texto debajo de
+  // cada juicio generado. Lo guardado alimenta el prompt de los siguientes.
+  // ---------------------------------------------------------------------------
+  async function guardarFeedback(entry) {
+    const stored = await chrome.storage.local.get(FEEDBACK_KEY);
+    const list = Array.isArray(stored[FEEDBACK_KEY]) ? stored[FEEDBACK_KEY] : [];
+    if (entry.id == null) entry.id = Date.now() + ':' + Math.random().toString(36).slice(2, 7);
+    const idx = list.findIndex((e) => e && e.id === entry.id);
+    if (idx >= 0) list[idx] = entry; else list.push(entry);
+    while (list.length > 300) list.shift();
+    await chrome.storage.local.set({ [FEEDBACK_KEY]: list });
+    FEEDBACK = list;
+    return entry.id;
+  }
+
+  // Elige qué referencias entran al prompt: últimos 4 👍 (a imitar),
+  // 2 👎 (a evitar) y 3 correcciones distintas (indicaciones permanentes).
+  function seleccionarReferencias() {
+    const orden = [...FEEDBACK].sort((a, b) => (b.t || 0) - (a.t || 0));
+    const corta = (s) => String(s || '').replace(/\s+/g, ' ').trim().slice(0, 300);
+    const buenos = orden.filter((e) => e.rating === 'up' && e.juicio).slice(0, 4).map((e) => corta(e.juicio));
+    const malos = orden.filter((e) => e.rating === 'down' && e.juicio).slice(0, 2).map((e) => corta(e.juicio));
+    const vistas = new Set();
+    const sugerencias = orden.filter((e) => e.sugerencia).map((e) => corta(e.sugerencia))
+      .filter((s) => s && !vistas.has(s) && vistas.add(s)).slice(0, 3);
+    return { buenos, malos, sugerencias };
+  }
+
+  function attachFeedbackWidget(textarea, info) {
+    if (!textarea || !textarea.parentElement) return;
+    const previo = textarea.nextElementSibling;
+    if (previo && previo.classList && previo.classList.contains('sj-feedback')) previo.remove();
+
+    const bar = document.createElement('div');
+    bar.className = 'sj-feedback';
+    bar.style.cssText = 'display:flex;gap:4px;align-items:center;flex-wrap:wrap;margin:3px 0 6px;font:11px system-ui,sans-serif;';
+    const estado = document.createElement('span');
+    estado.style.cssText = 'color:#475569;margin-left:4px;';
+
+    const mkBtn = (txt, title) => {
+      const b = document.createElement('button');
+      b.type = 'button';
+      b.textContent = txt;
+      b.title = title;
+      b.style.cssText = 'cursor:pointer;border:1px solid #94a3b8;background:#fff;color:#0f172a;border-radius:6px;padding:2px 7px;font:12px system-ui,sans-serif;line-height:1.3;';
+      return b;
+    };
+
+    let entryId = null;
+    const ratingBtns = [];
+    const marcar = (sel) => { for (const b of ratingBtns) b.style.background = b === sel ? '#bfdbfe' : '#fff'; };
+    const addRating = (txt, rating, title, msg) => {
+      const b = mkBtn(txt, title);
+      ratingBtns.push(b);
+      b.addEventListener('click', async () => {
+        try {
+          entryId = await guardarFeedback({
+            id: entryId, t: Date.now(), rating,
+            juicio: textarea.value, periodo: info.periodo || '', modelo: CFG.model || '',
+          });
+          marcar(b);
+          estado.textContent = msg;
+        } catch (err) { estado.textContent = '✗ ' + (err.message || err); }
+      });
+      bar.appendChild(b);
+    };
+    addRating('👍', 'up', 'Buen juicio: guardarlo como referencia para que la IA imite este estilo', '✓ guardado como referencia: la IA va a imitar este estilo');
+    addRating('➖', 'neutral', 'Neutral: guardarlo sin usarlo como ejemplo', '✓ guardado (neutral)');
+    addRating('👎', 'down', 'Mal juicio: guardarlo como ejemplo a evitar', '✓ guardado como ejemplo a evitar');
+
+    const corregir = mkBtn('💬 Corregir', 'Escribí una sugerencia en texto y la IA reescribe este juicio aplicándola');
+    corregir.addEventListener('click', async () => {
+      const sugerencia = window.prompt(
+        '¿Qué corrección querés aplicar a este juicio?\n' +
+        'Ej.: "más breve", "mencioná la mejora en lo oral", "tono menos formal", "no repitas «demuestra»".'
+      );
+      if (!sugerencia || !sugerencia.trim()) return;
+      const original = textarea.value;
+      corregir.disabled = true;
+      corregir.textContent = '⏳ corrigiendo…';
+      estado.textContent = '';
+      try {
+        const nuevo = await callClaude({
+          provider: CFG.provider || 'anthropic',
+          apiKey: CFG.apiKey,
+          model: CFG.model,
+          maxTokens: 1024,
+          system: buildSystemPrompt(CFG),
+          userMsg: [
+            'Juicio actual:',
+            `«${original}»`,
+            '',
+            `El/la docente pide esta corrección: «${sugerencia.trim()}».`,
+            'Reescribí el juicio aplicando la corrección y conservando lo que no haya que cambiar. Devolvé SOLO el texto del juicio corregido, sin comillas.',
+          ].join('\n'),
+        });
+        const limpio = recortarProlijo(pulirRedaccion(nuevo), CFG.maxChars);
+        setNativeValue(textarea, limpio);
+        fireGxChange(textarea);
+        estado.textContent = '✓ corregido — podés volver a corregir o calificarlo';
+        marcar(null);
+        entryId = null; // una nueva calificación apunta al juicio corregido
+        // La corrección queda como indicación permanente para futuros juicios.
+        await guardarFeedback({ t: Date.now(), sugerencia: sugerencia.trim(), juicio: original, periodo: info.periodo || '', modelo: CFG.model || '' });
+      } catch (err) {
+        estado.textContent = '✗ ' + (err.message || err);
+      } finally {
+        corregir.disabled = false;
+        corregir.textContent = '💬 Corregir';
+      }
+    });
+    bar.appendChild(corregir);
+    bar.appendChild(estado);
+    textarea.insertAdjacentElement('afterend', bar);
   }
 
   // ---------------------------------------------------------------------------
@@ -1022,6 +1164,11 @@
       fireGxChange(row.juicio);
       juicioCompletado = recortado;
       debugViz.mark(row.juicio, debugViz.colors.filled, `✓ Juicio (${recortado.length}c, ${viaBanco ? (viaBancoCompuesto ? 'banco compuesto' : 'banco') : viaPlantilla ? 'plantilla' : 'IA'})`);
+      // Juicio generado por IA → botones de feedback (👍/➖/👎 y corrección
+      // por texto) debajo del textarea.
+      if (!viaBanco && !viaPlantilla && recortado && !recortado.startsWith('(')) {
+        try { attachFeedbackWidget(row.juicio, { periodo: row.dsc }); } catch (_) { /* no crítico */ }
+      }
     }
 
     const partes = [];

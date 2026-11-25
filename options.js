@@ -10,6 +10,7 @@ const DEFAULTS = {
   compararConAnterior: true,
   contextoIA: '',
   cierreIntegrador: true,
+  usarReferencias: true,
   rendUsarRango: false,
   rendMin: 4,
   rendMax: 7,
@@ -44,7 +45,7 @@ const DEFAULTS = {
 
 const FIELDS = [
   'apiKey', 'model', 'maxChars', 'tone', 'contextoIA',
-  'compararConAnterior', 'cierreIntegrador',
+  'compararConAnterior', 'cierreIntegrador', 'usarReferencias',
   'rendUsarRango', 'rendMin', 'rendMax',
   'modoGeneracion', 'bancoJuicios', 'bancoPlataformaAddendum',
   'bancoComponer', 'bancoConectoresContraste', 'bancoConectoresRefuerzo', 'bancoNCAddendum',
@@ -274,6 +275,100 @@ async function probarIA() {
     showStatus(st, `✗ Falló la llamada: ${err.message}`, 'err');
   } finally {
     btn.disabled = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Sugerencia de modelo: le pregunta a la IA cuál de los modelos listados
+// redacta juicios con el estilo más humano, y una alternativa económica.
+// ---------------------------------------------------------------------------
+async function sugerirModelo() {
+  const st = $('sugerirModeloStatus');
+  const out = $('sugerirModeloResultado');
+  const providerId = $('provider').value || 'anthropic';
+  const p = SIGED_PROVIDERS[providerId] || {};
+  const apiKey = getFieldValue('apiKey');
+  if (!apiKey) { showStatus(st, `⚠ Pegá primero la API key de ${p.label || providerId}.`, 'err'); return; }
+  const modelos = Array.from($('model').options).map((o) => o.value).filter(Boolean).slice(0, 80);
+  if (!modelos.length) { showStatus(st, '⚠ No hay modelos en la lista. Cargalos primero con «↻».', 'err'); return; }
+  const model = $('model').value || modelos[0];
+  const btn = $('sugerirModelo');
+  btn.disabled = true;
+  out.hidden = true;
+  showStatus(st, `⏳ Consultando a ${p.label || providerId}…`, '');
+  const system = 'Sos un experto en modelos de lenguaje y su uso en educación. Respondés en español rioplatense, breve y concreto, en texto plano sin markdown.';
+  const userMsg = [
+    'Tarea: elegir el mejor modelo para redactar juicios de evaluación escolares en español rioplatense — textos breves, descriptivos, en tercera persona, con tono cálido y natural, lo más HUMANO posible (que no suenen a IA) — a un costo razonable (se generan decenas por grupo).',
+    `Modelos disponibles del proveedor ${p.label || providerId}:`,
+    modelos.join(', '),
+    '',
+    'Respondé con este formato exacto:',
+    'MEJOR: <id exacto de la lista>',
+    'POR QUÉ: <2 o 3 líneas>',
+    'ALTERNATIVA ECONÓMICA: <id exacto de la lista> — <1 línea>',
+  ].join('\n');
+  try {
+    const res = await mensajeBackground({
+      type: 'callAi',
+      payload: { provider: providerId, apiKey, model, maxTokens: 600, system, userMsg },
+    });
+    if (!res.ok) throw new Error(res.error || 'Error desconocido');
+    out.textContent = (res.text || '').trim();
+    out.hidden = false;
+    const m = (res.text || '').match(/MEJOR:\s*([^\s\n,]+)/i);
+    if (m && modelos.includes(m[1]) && m[1] !== $('model').value
+        && confirm(`La IA recomienda «${m[1]}». ¿Seleccionarlo ahora como modelo?`)) {
+      $('model').value = m[1];
+      showStatus(st, `✓ Modelo «${m[1]}» seleccionado. Apretá «Guardar configuración» para fijarlo.`, 'ok');
+    } else {
+      showStatus(st, '✓ Recomendación recibida.', 'ok');
+    }
+  } catch (err) {
+    out.hidden = true;
+    showStatus(st, `✗ Falló la consulta: ${err.message}`, 'err');
+  } finally {
+    btn.disabled = false;
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Referencias: lista de juicios calificados (👍/➖/👎) y correcciones pedidas
+// desde SIGED. Se guardan en storage bajo 'siged_feedback'.
+// ---------------------------------------------------------------------------
+const FEEDBACK_KEY = 'siged_feedback';
+
+async function renderReferencias() {
+  const cont = $('listaReferencias');
+  if (!cont) return;
+  const list = (await chrome.storage.local.get(FEEDBACK_KEY))[FEEDBACK_KEY] || [];
+  if (!list.length) {
+    cont.innerHTML = '<p class="hint">Todavía no guardaste ninguno. Generá juicios en SIGED con el modo IA y usá los botones que aparecen debajo de cada juicio.</p>';
+    return;
+  }
+  cont.innerHTML = '';
+  const iconos = { up: '👍', neutral: '➖', down: '👎' };
+  const orden = [...list].sort((a, b) => (b.t || 0) - (a.t || 0));
+  for (const e of orden) {
+    const item = document.createElement('div');
+    item.className = 'base-item';
+    item.style.alignItems = 'flex-start';
+    const icono = e.sugerencia ? '💬' : (iconos[e.rating] || '•');
+    const fecha = e.t ? new Date(e.t).toLocaleDateString('es-UY') : '';
+    const texto = e.sugerencia ? `Corrección: «${e.sugerencia}»` : (e.juicio || '');
+    item.innerHTML = `
+      <span style="font-size:16px">${icono}</span>
+      <div style="flex:1;min-width:0">
+        <div class="texto" style="font-size:12.5px;white-space:pre-wrap;word-break:break-word"></div>
+        <div class="bmeta">${fecha}${e.periodo ? ' · ' + e.periodo : ''}${e.modelo ? ' · ' + e.modelo : ''}</div>
+      </div>
+      <button class="btn danger small" data-del>Borrar</button>`;
+    item.querySelector('.texto').textContent = texto;
+    item.querySelector('[data-del]').addEventListener('click', async () => {
+      const actual = (await chrome.storage.local.get(FEEDBACK_KEY))[FEEDBACK_KEY] || [];
+      await chrome.storage.local.set({ [FEEDBACK_KEY]: actual.filter((x) => !(x.id === e.id && x.t === e.t)) });
+      await renderReferencias();
+    });
+    cont.appendChild(item);
   }
 }
 
@@ -914,6 +1009,7 @@ async function load() {
   refreshModoHint();
   refreshBancoCoverage();
   await renderBases();
+  await renderReferencias();
   // Refresco automático de modelos desde la API (en segundo plano).
   cargarModelosRemotos(providerId, remembered.apiKey || cfg.apiKey || '', { silencioso: true });
 }
@@ -996,6 +1092,13 @@ document.addEventListener('DOMContentLoaded', async () => {
     cargarModelosRemotos($('provider').value, getFieldValue('apiKey'), { silencioso: false });
   });
   $('testIA').addEventListener('click', probarIA);
+  $('sugerirModelo').addEventListener('click', sugerirModelo);
+  $('borrarReferencias').addEventListener('click', async () => {
+    if (!confirm('¿Borrar TODAS las referencias (calificaciones y correcciones)? La IA deja de usarlas como guía.')) return;
+    await chrome.storage.local.set({ [FEEDBACK_KEY]: [] });
+    await renderReferencias();
+    showStatus($('refStatus'), '✓ Referencias borradas.', 'ok');
+  });
 
   for (const radio of document.querySelectorAll('input[name="modoGeneracion"]')) {
     radio.addEventListener('change', refreshModoHint);
