@@ -81,9 +81,10 @@ Se abre una página de opciones a pantalla completa con pestañas:
   respuesta se cargan la rúbrica y el banco de una sola vez.
 - **📊 Rúbrica** — qué significa cada rango de notas (instrucción
   obligatoria para el modo IA).
-- **🎨 Estilo y Rend.** — tono, contexto del período / prompt guía (texto
-  libre del/la docente que se inyecta en cada juicio del modo IA para
-  personalizarlo), largo máximo (solo recorta al modo IA), contraste con
+- **🎨 Estilo y Rend.** — tono, guía de narración (texto libre del/la
+  docente sobre cómo narrar el juicio: la perspectiva, qué tener en
+  cuenta, qué priorizar o evitar; se inyecta en cada juicio del modo IA),
+  largo máximo (solo recorta al modo IA), contraste con
   períodos anteriores, juicio final integrador (en el último período la IA
   revisa los juicios y Rend anteriores del alumno y redacta el cierre del
   proceso con las notas de este período como referencia) y prorrateo del

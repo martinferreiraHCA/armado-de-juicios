@@ -778,7 +778,7 @@
       lines.push('Cuando se incluya el "Historial de períodos anteriores", usalo para describir el PROCESO del/la estudiante: progreso, mantenimiento o retroceso respecto al período inmediato anterior. Evitá repetir literalmente juicios anteriores.');
     }
     if ((cfg.contextoIA || '').trim()) {
-      lines.push('CONTEXTO DEL PERÍODO (escrito por el/la docente; usalo como guía principal para personalizar el juicio con lo efectivamente trabajado y sus criterios de logro):');
+      lines.push('GUÍA DE NARRACIÓN (escrita por el/la docente): define la perspectiva desde la que narrar el juicio, qué tener en cuenta, qué priorizar o evitar al contar el proceso del/la estudiante. Seguila al redactar, sin copiarla literalmente:');
       lines.push(cfg.contextoIA.trim());
     }
     lines.push(`Largo máximo: ${cfg.maxChars} caracteres. Devolvé SOLO el texto del juicio, sin comillas ni encabezados.`);
