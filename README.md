@@ -107,6 +107,19 @@ Se abre una página de opciones a pantalla completa con pestañas:
   como ejemplos a evitar y las correcciones como indicaciones permanentes,
   así la redacción mejora con el uso. La pestaña lista lo guardado y
   permite borrarlo o apagar su uso.
+- **Regla de variación del Rend** — la nota no puede subir ni bajar más
+  de N puntos (por defecto 2) respecto del período anterior; si el
+  promedio se sale del margen, el Rend se ajusta al límite. Configurable
+  en «Estilo y Rend.».
+- **Panel sobre SIGED** — además de «alumno actual» y «todo el grupo»,
+  hay dos recorridos de grupo separados: **solo nota** (completa el Rend
+  sin tocar juicios) y **solo juicio** (redacta el juicio tomando como
+  referencia la nota que ya tiene cada alumno, sin tocar el Rend). El
+  apartado **📝 Contexto del grupo** permite anotar qué se evaluó en cada
+  ítem ese período (ej.: Escritas = «muestra de fin de mes»): el modo IA
+  lo usa para interpretar la nota y lo menciona en el juicio. Los botones
+  **⬇️ Respaldo / ⬆️ Restaurar** bajan y suben TODO lo guardado en un
+  solo archivo.
 - **💾 Mis bases** — guardá la configuración actual con un nombre (por
   asignatura, grupo o período), cargala cuando quieras, y exportá/importá
   todo a un archivo JSON para respaldar o compartir con colegas (las API

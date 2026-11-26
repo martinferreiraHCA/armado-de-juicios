@@ -24,6 +24,17 @@
     rendUsarRango: false,
     rendMin: 4,
     rendMax: 7,
+    // Regla institucional: el Rend no puede subir ni bajar más de
+    // rendMaxVariacion puntos respecto del período anterior.
+    rendLimitarVariacion: true,
+    rendMaxVariacion: 2,
+    // Contexto del grupo (se edita en el panel sobre SIGED, solo modo IA):
+    // qué se evaluó en cada ítem este período, para interpretar las notas
+    // y mencionarlo en el juicio (ej.: Escritas = "muestra de fin de mes").
+    ctxOrales: '',
+    ctxEscritas: '',
+    ctxOtras: '',
+    ctxGeneral: '',
     modoGeneracion: 'ia', // 'ia' | 'banco' | 'plantilla' | 'mixto'
     bancoJuicios: '',
     bancoPlataformaAddendum: 'No debe descuidar las entregas en plataforma.',
@@ -811,7 +822,7 @@
     return lines.join('\n');
   }
 
-  function buildUserMessage({ alumno, libreta, periodoDsc, notasDetalle, promedio, clasif, numeros, historial, incluirHistorial, esCierre }) {
+  function buildUserMessage({ alumno, libreta, periodoDsc, notasDetalle, promedio, clasif, numeros, historial, incluirHistorial, esCierre, rendAsignado, ctx }) {
     const dist = distribucionNotas(numeros || []);
     const distTxt = [...dist.entries()]
       .sort((a, b) => a[0] - b[0])
@@ -828,6 +839,22 @@
       'Detalle de notas del período:',
       notasDetalle || '(sin notas registradas)',
     ];
+    if (rendAsignado != null) {
+      parts.push(`Nota de rendimiento (Rend) asignada al período: ${rendAsignado}. El juicio debe ser coherente con esta nota.`);
+    }
+    // Contexto del grupo cargado en el panel: qué se evaluó en cada ítem.
+    const c = ctx || {};
+    const ctxLineas = [];
+    if (c.orales) ctxLineas.push(`- Orales: ${c.orales}`);
+    if (c.escritas) ctxLineas.push(`- Escritas: ${c.escritas}`);
+    if (c.otras) ctxLineas.push(`- Otras actividades: ${c.otras}`);
+    if (c.general) ctxLineas.push(`- General: ${c.general}`);
+    if (ctxLineas.length) {
+      parts.push('');
+      parts.push('Contexto de las notas de este período, indicado por el/la docente para todo el grupo (qué se evaluó en cada ítem):');
+      parts.push(...ctxLineas);
+      parts.push('Usá este contexto para interpretar correctamente cada nota y MENCIONÁ en el juicio la actividad correspondiente al hablar del desempeño en ese ítem (por ejemplo, si la nota de Escritas corresponde a una muestra, referite al desempeño en la muestra, no a "lo escrito" en general). Si un ítem no tiene notas para este/a estudiante, no menciones su actividad.');
+    }
     if (incluirHistorial && historial && historial.length) {
       parts.push('');
       parts.push('Historial de períodos anteriores (más antiguo primero):');
@@ -1022,11 +1049,36 @@
     return m.includes('habilitado') && !m.includes('no habilitado');
   }
 
+  // Lee el Rend numérico que tiene (o muestra) una fila: primero el <select>
+  // editable, después la columna R visible de la grilla de notas.
+  function leerRendDeFila(row, data) {
+    const num = (s) => {
+      const m = String(s == null ? '' : s).replace(',', '.').match(/\d+(?:\.\d+)?/);
+      const n = m ? parseFloat(m[0]) : null;
+      return n != null && n >= 1 && n <= 12 ? n : null;
+    };
+    if (row && row.califSelect && row.califSelect.value !== '') {
+      const opt = row.califSelect.options[row.califSelect.selectedIndex];
+      const n = num(opt ? opt.textContent : '');
+      if (n != null) return n;
+      const v = num(row.califSelect.value);
+      if (v != null) return v;
+    }
+    if (data) {
+      const r = num(data.RendVisible);
+      if (r != null) return r;
+    }
+    return null;
+  }
+
+  // opts.alcance: 'ambos' (default) | 'nota' (solo Rend) | 'juicio' (solo
+  // juicio, tomando como referencia el Rend que ya tiene la fila).
   async function procesarFila(row, periodMap, opts) {
     const periodData = periodMap.get((row.code || '').trim());
     if (!periodData) return { ok: false, msg: `Sin datos para ${row.code}` };
     if (!periodoHabilitado(periodData)) return { ok: false, msg: `Período no habilitado (${row.dsc})` };
     if (!row.juicio && !row.califSelect) return { ok: false, msg: `Fila sin campos editables (${row.dsc})` };
+    const alcance = opts.alcance || 'ambos';
 
     const notasDetalle = buildNotasDetalle(periodData);
     const numeros = todasLasNotasNumericas(periodData);
@@ -1049,21 +1101,38 @@
       prorrateoLog = ` → prorrateado a ${promedioFinal.toFixed(2)} (rango ${CFG.rendMin}-${CFG.rendMax})`;
     }
 
+    // Regla institucional: el Rend no puede subir ni bajar más de N puntos
+    // respecto del período anterior.
+    let variacionLog = '';
+    if (promedioFinal != null && CFG.rendLimitarVariacion && opts.rendAnterior != null) {
+      const tope = Math.max(0, Number(CFG.rendMaxVariacion) || 2);
+      const min = opts.rendAnterior - tope;
+      const max = opts.rendAnterior + tope;
+      if (promedioFinal < min || promedioFinal > max) {
+        promedioFinal = Math.max(min, Math.min(max, promedioFinal));
+        variacionLog = ` → limitado a ${promedioFinal.toFixed(2)} (período anterior ${opts.rendAnterior}, máx ±${tope})`;
+      }
+    }
+
     let rendCompletado = null;
     let rendNota = null; // nota numérica final, para usar también en banco
-    if (periodData.AsigPideRendimiento && promedioFinal != null && row.califSelect) {
+    if (alcance === 'juicio') {
+      // Solo juicio: no se toca el Rend; el que ya tiene la fila es la
+      // referencia para redactar.
+      rendNota = leerRendDeFila(row, periodData);
+    } else if (periodData.AsigPideRendimiento && promedioFinal != null && row.califSelect) {
       const opt = elegirOpcionMasCercana(row.califSelect, promedioFinal);
       if (opt) {
         setNativeValue(row.califSelect, opt.value);
         fireGxChange(row.califSelect);
         rendCompletado = opt.textContent.trim();
         rendNota = parseFloat((opt.value || opt.textContent).replace(',', '.'));
-        debugViz.mark(row.califSelect, debugViz.colors.filled, `✓ Rend=${rendCompletado} (avg ${promedio.toFixed(2)}${prorrateoLog})`);
+        debugViz.mark(row.califSelect, debugViz.colors.filled, `✓ Rend=${rendCompletado} (avg ${promedio.toFixed(2)}${prorrateoLog}${variacionLog})`);
       }
     }
 
     let juicioCompletado = null;
-    if (periodData.AsigPideJuicio && row.juicio && !row.juicio.disabled) {
+    if (alcance !== 'nota' && periodData.AsigPideJuicio && row.juicio && !row.juicio.disabled) {
       const clasif = clasificarNotas(numeros);
       const hayAusencias = clasif.ausencias > 0;
       // Nota redondeada que vamos a usar para el banco (sin prorrateo no
@@ -1148,6 +1217,13 @@
               historial: opts.historial,
               incluirHistorial: !!CFG.compararConAnterior || esCierre,
               esCierre,
+              rendAsignado: rendNota,
+              ctx: {
+                orales: (CFG.ctxOrales || '').trim(),
+                escritas: (CFG.ctxEscritas || '').trim(),
+                otras: (CFG.ctxOtras || '').trim(),
+                general: (CFG.ctxGeneral || '').trim(),
+              },
             }),
           });
           text = aplicarAdendumPlataforma(text, hayAusencias, CFG.bancoPlataformaAddendum);
@@ -1172,7 +1248,7 @@
     }
 
     const partes = [];
-    if (rendCompletado) partes.push(`Rend=${rendCompletado}`);
+    if (rendCompletado) partes.push(`Rend=${rendCompletado}${variacionLog ? ' (limitado por ±' + (Number(CFG.rendMaxVariacion) || 2) + ' vs. período anterior ' + opts.rendAnterior + ')' : ''}`);
     if (juicioCompletado) partes.push('✓ juicio');
     return { ok: true, msg: `${row.dsc}: ${partes.join(' ') || 'sin cambios'}` };
   }
@@ -1194,7 +1270,7 @@
   }
 
   // Procesa la grilla completa del alumno actual. Devuelve resumen.
-  async function procesarAlumnoActual(log, abortSignal) {
+  async function procesarAlumnoActual(log, abortSignal, alcance) {
     // Borramos marcas anteriores para no confundir alumnos.
     debugViz.clear();
     // Pequeña espera defensiva: en navegaciones GX a veces termina el
@@ -1259,7 +1335,13 @@
       const necesitaHistorial = CFG.compararConAnterior || (CFG.cierreIntegrador && esUltimoPeriodo);
       const historial = necesitaHistorial ? historialAntesDe(rows, periodMap, i) : [];
       try {
-        const r = await procesarFila(row, periodMap, { alumno, libreta, historial, esUltimoPeriodo });
+        // Rend del período anterior más cercano que tenga nota: es la base
+        // de la regla de variación máxima (±N puntos).
+        let rendAnterior = null;
+        for (let j = i - 1; j >= 0 && rendAnterior == null; j--) {
+          rendAnterior = leerRendDeFila(rows[j], periodMap.get((rows[j].code || '').trim()));
+        }
+        const r = await procesarFila(row, periodMap, { alumno, libreta, historial, esUltimoPeriodo, rendAnterior, alcance: alcance || 'ambos' });
         log((r.ok ? '✓ ' : '· ') + r.msg);
       } catch (err) {
         log(`✗ ${row.dsc || row.code}: ${err.message}`);
@@ -1932,7 +2014,7 @@
     return { changed: false, timeout: !navDetected, gridStuck: navDetected };
   }
 
-  async function procesarTodos(log, abortSignal) {
+  async function procesarTodos(log, abortSignal, alcance) {
     const procesados = new Set();
     let i = 0;
     let firstIteration = true;
@@ -1980,7 +2062,7 @@
       const stateBefore = readGxStateRaw();
       let res;
       try {
-        res = await procesarAlumnoActual(log, abortSignal);
+        res = await procesarAlumnoActual(log, abortSignal, alcance);
       } catch (err) {
         log(`✗ error procesando alumno: ${err.message || err}`);
         res = { ok: false, error: true };
@@ -2275,6 +2357,43 @@
   // ---------------------------------------------------------------------------
   // Panel flotante
   // ---------------------------------------------------------------------------
+  // ---------------------------------------------------------------------------
+  // Respaldo completo: TODO chrome.storage.local (configuración, bancos,
+  // bases guardadas, referencias, keys por proveedor, caché de modelos) en un
+  // solo archivo JSON, para retomar el sistema sin reconfigurar nada.
+  // ---------------------------------------------------------------------------
+  const RESPALDO_TIPO = 'siged-juicios-respaldo-completo';
+
+  async function descargarRespaldo() {
+    const data = {
+      tipo: RESPALDO_TIPO,
+      version: 1,
+      exportadoEl: new Date().toISOString(),
+      storage: await chrome.storage.local.get(null),
+    };
+    const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(blob);
+    a.download = `siged-juicios-respaldo-${new Date().toISOString().slice(0, 10)}.json`;
+    document.body.appendChild(a);
+    a.click();
+    a.remove();
+    setTimeout(() => URL.revokeObjectURL(a.href), 2000);
+  }
+
+  // Devuelve la cantidad de claves restauradas, o null si se canceló.
+  async function restaurarRespaldo(file) {
+    const data = JSON.parse(await file.text());
+    if (!data || data.tipo !== RESPALDO_TIPO || !data.storage || typeof data.storage !== 'object') {
+      throw new Error('el archivo no es un respaldo completo de esta extensión');
+    }
+    const fecha = data.exportadoEl ? new Date(data.exportadoEl).toLocaleString('es-UY') : 'fecha desconocida';
+    if (!window.confirm(`Vas a REEMPLAZAR toda la configuración actual por el respaldo del ${fecha}.\n\n¿Continuar?`)) return null;
+    await chrome.storage.local.clear();
+    await chrome.storage.local.set(data.storage);
+    return Object.keys(data.storage).length;
+  }
+
   function buildPanel() {
     if (document.getElementById('siged-juicios-panel')) return;
     const panel = document.createElement('div');
@@ -2301,7 +2420,11 @@
       <div class="body">
         <div class="status" data-fld="cfg-status">Cargando configuración…</div>
         <button class="primary" data-act="run">Generar juicios (alumno actual)</button>
-        <button class="primary alt" data-act="run-all">Procesar todo el grupo (auto)</button>
+        <button class="primary alt" data-act="run-all">Procesar todo el grupo (nota + juicio)</button>
+        <div class="row2">
+          <button class="primary alt" data-act="run-all-nota" title="Recorre el grupo completando SOLO el Rend (no toca los juicios)">Grupo: solo nota</button>
+          <button class="primary alt" data-act="run-all-juicio" title="Recorre el grupo redactando SOLO el juicio, tomando como referencia la nota que ya tiene cada alumno">Grupo: solo juicio</button>
+        </div>
         <button class="danger" data-act="stop" hidden>⏹ Detener</button>
         <button class="secondary" data-act="diag">🔍 Diagnóstico ahora</button>
         <button class="secondary" data-act="precarga-tooltips">💬 Pre-cargar tooltips de notas</button>
@@ -2310,6 +2433,21 @@
           🐞 Modo debug visual (pinta lo que toca)
         </label>
         <div class="legend" data-fld="debug-legend" hidden></div>
+        <details class="scrap ctx">
+          <summary>📝 Contexto del grupo (solo IA)</summary>
+          <div class="scrap-body">
+            <p class="hint">Qué se evaluó en cada ítem este período. La IA lo usa para interpretar la nota y lo menciona en el juicio (ej.: la nota de Escritas fue una muestra). Se guarda solo; cambialo al pasar de grupo.</p>
+            <input type="text" data-ctx="ctxOrales" placeholder="Orales: ej. defensa oral del proyecto">
+            <input type="text" data-ctx="ctxEscritas" placeholder="Escritas: ej. muestra de fin de mes">
+            <input type="text" data-ctx="ctxOtras" placeholder="O. Act.: ej. tareas en plataforma">
+            <input type="text" data-ctx="ctxGeneral" placeholder="General: ej. hubo salida didáctica">
+          </div>
+        </details>
+        <div class="row2">
+          <button class="secondary" data-act="backup-down" title="Descarga TODA la configuración (bancos, bases, referencias, keys) en un archivo">⬇️ Respaldo</button>
+          <button class="secondary" data-act="backup-up" title="Restaura todo desde un archivo de respaldo">⬆️ Restaurar</button>
+        </div>
+        <input type="file" data-fld="backup-file" accept="application/json,.json" hidden>
         <details class="scrap">
           <summary>🔧 Modo scrapping (avanzado)</summary>
           <div class="scrap-body">
@@ -2345,6 +2483,10 @@
       #siged-juicios-panel details.scrap .row2 button{flex:1;min-width:60px}
       #siged-juicios-panel details.scrap p.hint{margin:4px 0 0;color:#9ca3af;font-size:10px;line-height:1.3}
       #siged-juicios-panel details.scrap.active summary::after{content:" · ACTIVO";color:#22c55e}
+      #siged-juicios-panel .row2{display:flex;gap:4px;flex-wrap:wrap}
+      #siged-juicios-panel .row2 button{flex:1;min-width:60px}
+      #siged-juicios-panel .row2 button.primary{padding:7px 6px;font-size:12px}
+      #siged-juicios-panel input[type=text]{background:#0f172a;color:#f9fafb;border:1px solid #4b5563;border-radius:5px;padding:5px 7px;font:12px system-ui,sans-serif;width:100%;box-sizing:border-box}
     `;
     panel.appendChild(extra);
 
@@ -2429,6 +2571,8 @@
     const setRunning = (running) => {
       panel.querySelector('[data-act="run"]').disabled = running;
       panel.querySelector('[data-act="run-all"]').disabled = running;
+      panel.querySelector('[data-act="run-all-nota"]').disabled = running;
+      panel.querySelector('[data-act="run-all-juicio"]').disabled = running;
       panel.querySelector('[data-act="stop"]').hidden = !running;
     };
 
@@ -2473,34 +2617,52 @@
       if (act === 'debug-clear') { debugViz.clear(); log('🐞 Marcas borradas.'); return; }
       if (act === 'scrap-export') { await scrapingExport(); return; }
       if (act === 'scrap-clear') { scrapingClear(); return; }
-      if (act === 'run' || act === 'run-all') {
+      if (act === 'backup-down') {
+        try { await descargarRespaldo(); log('⬇️ Respaldo completo descargado.'); }
+        catch (err) { log(`✗ No pude generar el respaldo: ${err.message || err}`); }
+        return;
+      }
+      if (act === 'backup-up') { panel.querySelector('[data-fld="backup-file"]').click(); return; }
+      const ACTS_RUN = { 'run': 'ambos', 'run-all': 'ambos', 'run-all-nota': 'nota', 'run-all-juicio': 'juicio' };
+      if (act in ACTS_RUN) {
+        const alcance = ACTS_RUN[act];
+        const esGrupo = act !== 'run';
         await loadConfig();
         refreshStatus();
         const modoActivo = CFG.modoGeneracion || 'ia';
         const tieneBancoActivo = hayBancoConfigurado(CFG);
+        // "Solo nota" no redacta juicios: no necesita banco, plantillas ni IA.
+        if (alcance === 'nota') {
+          // sin validaciones de modo
+        } else
         if (modoActivo === 'banco' && !tieneBancoActivo) {
           log('Modo "banco" pero el banco está vacío. Pegá los juicios en el ícono de la extensión.');
           return;
         }
         const tienePlantillasActivo = ['plantilla1', 'plantilla24', 'plantilla56', 'plantilla78', 'plantilla910']
           .some((k) => !!(CFG[k] || '').trim());
-        if (modoActivo === 'plantilla' && !tienePlantillasActivo) {
+        if (alcance !== 'nota' && modoActivo === 'plantilla' && !tienePlantillasActivo) {
           log('Modo "plantillas" pero no hay plantillas configuradas. Abrí la configuración de la extensión.');
           return;
         }
-        if (modoActivo === 'ia' && !CFG.apiKey) {
+        if (alcance !== 'nota' && modoActivo === 'ia' && !CFG.apiKey) {
           log('Modo "IA" pero falta API key. Configurala desde el ícono de la extensión.');
           return;
         }
-        if (modoActivo === 'mixto' && !CFG.apiKey && !tieneBancoActivo) {
+        if (alcance !== 'nota' && modoActivo === 'mixto' && !CFG.apiKey && !tieneBancoActivo) {
           log('Modo "mixto" pero falta API key y banco. Configurá al menos uno.');
           return;
         }
 
-        if (act === 'run-all') {
+        if (esGrupo) {
+          const queHace = alcance === 'nota'
+            ? '- completar SOLO el Rend. de cada uno (los juicios no se tocan)\n'
+            : alcance === 'juicio'
+              ? '- redactar SOLO el juicio de cada uno, tomando como referencia la nota que ya tiene (el Rend. no se toca)\n'
+              : '- generar Rend. y Juicio para cada uno\n';
           const ok = window.confirm(
             'Esto va a procesar TODOS los alumnos del grupo:\n' +
-            '- generar Rend. y Juicio para cada uno con IA\n' +
+            queHace +
             '- guardar automáticamente con "Guardar y siguiente"\n\n' +
             'Vas a poder detenerlo con el botón "Detener" en cualquier momento, ' +
             'pero los alumnos ya guardados quedan guardados en SIGED.\n\n' +
@@ -2513,10 +2675,10 @@
         setRunning(true);
         try {
           if (act === 'run') {
-            await procesarAlumnoActual(log, abortController.signal);
+            await procesarAlumnoActual(log, abortController.signal, alcance);
             log('Listo. Revisá la grilla y, si está OK, presioná "Guardar y siguiente" en SIGED.');
           } else {
-            await procesarTodos(log, abortController.signal);
+            await procesarTodos(log, abortController.signal, alcance);
             log('— Fin del recorrido del grupo —');
           }
         } catch (err) {
@@ -2545,8 +2707,50 @@
     });
     document.addEventListener('mouseup', () => { drag = null; });
 
-    loadConfig().then(refreshStatus);
-    chrome.storage.onChanged.addListener(refreshStatus);
+    // Contexto del grupo: se guarda solo al escribir y alimenta al modo IA.
+    const ctxInputs = Array.from(panel.querySelectorAll('input[data-ctx]'));
+    const pintarCtx = () => {
+      for (const inp of ctxInputs) {
+        const v = CFG[inp.getAttribute('data-ctx')] || '';
+        if (document.activeElement !== inp && inp.value !== v) inp.value = v;
+      }
+    };
+    let ctxTimer = null;
+    for (const inp of ctxInputs) {
+      // SIGED/GeneXus escucha teclas a nivel documento: que no le lleguen.
+      for (const ev of ['keydown', 'keyup', 'keypress']) inp.addEventListener(ev, (e) => e.stopPropagation());
+      inp.addEventListener('input', () => {
+        const key = inp.getAttribute('data-ctx');
+        CFG[key] = inp.value;
+        clearTimeout(ctxTimer);
+        ctxTimer = setTimeout(() => {
+          const out = {};
+          for (const i of ctxInputs) out[i.getAttribute('data-ctx')] = i.value.trim();
+          chrome.storage.local.set(out);
+        }, 400);
+      });
+    }
+
+    // Restaurar respaldo completo desde archivo.
+    const backupFile = panel.querySelector('[data-fld="backup-file"]');
+    backupFile.addEventListener('change', async () => {
+      const f = backupFile.files && backupFile.files[0];
+      backupFile.value = '';
+      if (!f) return;
+      try {
+        const n = await restaurarRespaldo(f);
+        if (n == null) { log('Restauración cancelada.'); return; }
+        await loadConfig();
+        refreshStatus();
+        pintarCtx();
+        log(`⬆️ Respaldo restaurado (${n} claves). Todo quedó como estaba al exportar.`);
+      } catch (err) {
+        log(`✗ No pude restaurar: ${err.message || err}`);
+      }
+    });
+
+    loadConfig().then(() => { refreshStatus(); pintarCtx(); });
+    chrome.storage.onChanged.addListener(() => { refreshStatus(); pintarCtx(); });
   }
 
   function bootstrap() {

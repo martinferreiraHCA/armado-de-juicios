@@ -424,6 +424,19 @@
           </label>
         </div>
       </div>
+      <div class="card">
+        <h2>Variación máxima entre períodos</h2>
+        <p class="desc">Regla institucional: la nota no puede subir ni bajar más de cierta cantidad de puntos respecto del período anterior. Si el promedio de este período se sale de ese margen, el Rend se ajusta al límite (ej.: período anterior 5, promedio actual 8,4 → Rend 7). Si el alumno no tiene nota anterior, no se limita.</p>
+        <label class="check">
+          <input type="checkbox" id="rendLimitarVariacion">
+          Limitar cuánto puede variar el Rend respecto del período anterior
+        </label>
+        <div class="row">
+          <label>Máximo de puntos de diferencia (hacia arriba o hacia abajo)
+            <input type="number" id="rendMaxVariacion" min="1" max="9" step="1">
+          </label>
+        </div>
+      </div>
     </section>
 
     <!-- ============ PROVEEDOR ============ -->
@@ -503,7 +516,17 @@
         <div id="listaBases"><p class="hint">Todavía no guardaste ninguna base.</p></div>
       </div>
       <div class="card">
-        <h2>Respaldo</h2>
+        <h2>Respaldo completo (todo en un archivo)</h2>
+        <p class="desc">Descarga <b>absolutamente todo</b> lo guardado — configuración, todos los bancos, bases, referencias 👍/👎 y correcciones, contexto del grupo, modelos y API keys — en un solo archivo, para retomar el sistema en otra computadora o después de reinstalar sin configurar nada. Al restaurar se reemplaza todo lo actual. ⚠ El archivo incluye tus API keys: no lo compartas.</p>
+        <div class="toolbar">
+          <button class="btn" id="respaldoDescargar">⬇️ Descargar respaldo completo</button>
+          <button class="btn secondary" id="respaldoRestaurar">⬆️ Restaurar desde archivo</button>
+          <input type="file" id="respaldoFile" accept="application/json,.json" hidden>
+        </div>
+        <div class="status" id="respaldoStatus"></div>
+      </div>
+      <div class="card">
+        <h2>Compartir configuración (sin API keys)</h2>
         <div class="toolbar">
           <button class="btn secondary" id="exportarBases">⬇️ Exportar todo (JSON)</button>
           <button class="btn secondary" id="importarBases">⬆️ Importar desde archivo</button>

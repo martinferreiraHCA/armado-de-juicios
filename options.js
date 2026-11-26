@@ -14,6 +14,12 @@ const DEFAULTS = {
   rendUsarRango: false,
   rendMin: 4,
   rendMax: 7,
+  rendLimitarVariacion: true,
+  rendMaxVariacion: 2,
+  ctxOrales: '',
+  ctxEscritas: '',
+  ctxOtras: '',
+  ctxGeneral: '',
   modoGeneracion: 'ia',
   bancoJuicios: '',
   bancoPlataformaAddendum: 'No debe descuidar las entregas en plataforma.',
@@ -46,7 +52,7 @@ const DEFAULTS = {
 const FIELDS = [
   'apiKey', 'model', 'maxChars', 'tone', 'contextoIA',
   'compararConAnterior', 'cierreIntegrador', 'usarReferencias',
-  'rendUsarRango', 'rendMin', 'rendMax',
+  'rendUsarRango', 'rendMin', 'rendMax', 'rendLimitarVariacion', 'rendMaxVariacion',
   'modoGeneracion', 'bancoJuicios', 'bancoPlataformaAddendum',
   'bancoComponer', 'bancoConectoresContraste', 'bancoConectoresRefuerzo', 'bancoNCAddendum',
   'bancoEstructura', 'bancoOrales', 'bancoEscritas', 'bancoOtras', 'bancoRecomendaciones',
@@ -984,6 +990,47 @@ async function importarBases(file) {
 }
 
 // ---------------------------------------------------------------------------
+// Respaldo completo: TODO chrome.storage.local en un solo archivo (mismo
+// formato que el respaldo del panel en SIGED).
+// ---------------------------------------------------------------------------
+const RESPALDO_TIPO = 'siged-juicios-respaldo-completo';
+
+async function descargarRespaldoCompleto() {
+  const data = {
+    tipo: RESPALDO_TIPO,
+    version: 1,
+    exportadoEl: new Date().toISOString(),
+    storage: await chrome.storage.local.get(null),
+  };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `siged-juicios-respaldo-${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+  showStatus($('respaldoStatus'), '✓ Respaldo completo descargado. Guardalo en un lugar seguro (incluye tus API keys).', 'ok');
+}
+
+async function restaurarRespaldoCompleto(file) {
+  const st = $('respaldoStatus');
+  try {
+    const data = JSON.parse(await file.text());
+    if (!data || data.tipo !== RESPALDO_TIPO || !data.storage || typeof data.storage !== 'object') {
+      showStatus(st, '⚠ El archivo no es un respaldo completo de esta extensión. (Los archivos de «Compartir configuración» se importan con el botón de abajo.)', 'err');
+      return;
+    }
+    const fecha = data.exportadoEl ? new Date(data.exportadoEl).toLocaleString('es-UY') : 'fecha desconocida';
+    if (!confirm(`Vas a REEMPLAZAR toda la configuración actual por el respaldo del ${fecha}.\n\n¿Continuar?`)) return;
+    await chrome.storage.local.clear();
+    await chrome.storage.local.set(data.storage);
+    await load();
+    showStatus(st, `✓ Respaldo restaurado (${Object.keys(data.storage).length} claves). Todo quedó como estaba al exportar.`, 'ok');
+  } catch (_) {
+    showStatus(st, '⚠ No pude leer el archivo. ¿Es un JSON de respaldo válido?', 'err');
+  }
+}
+
+// ---------------------------------------------------------------------------
 // Cargar / guardar configuración principal
 // ---------------------------------------------------------------------------
 async function load() {
@@ -1024,6 +1071,7 @@ async function save() {
   cfg.rendMin = Math.max(1, Math.min(10, cfg.rendMin || DEFAULTS.rendMin));
   cfg.rendMax = Math.max(1, Math.min(10, cfg.rendMax || DEFAULTS.rendMax));
   cfg.snUmbral = Math.max(1, Math.min(20, cfg.snUmbral || DEFAULTS.snUmbral));
+  cfg.rendMaxVariacion = Math.max(1, Math.min(9, cfg.rendMaxVariacion || DEFAULTS.rendMaxVariacion));
   const st = $('status');
   if (cfg.rendMin >= cfg.rendMax && cfg.rendUsarRango) {
     cfg.rendUsarRango = false;
@@ -1121,6 +1169,14 @@ document.addEventListener('DOMContentLoaded', async () => {
     showStatus($('promptStatus'), '✓ Copiado al portapapeles.', 'ok');
   });
   $('aplicarRespuesta').addEventListener('click', aplicarRespuesta);
+
+  $('respaldoDescargar').addEventListener('click', descargarRespaldoCompleto);
+  $('respaldoRestaurar').addEventListener('click', () => $('respaldoFile').click());
+  $('respaldoFile').addEventListener('change', (e) => {
+    const f = e.target.files && e.target.files[0];
+    e.target.value = '';
+    if (f) restaurarRespaldoCompleto(f);
+  });
 
   $('guardarBase').addEventListener('click', guardarBase);
   $('exportarBases').addEventListener('click', exportarBases);
